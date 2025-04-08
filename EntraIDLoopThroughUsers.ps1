@@ -19,8 +19,8 @@ param (
 )
 
 # Azure AD App Registration details
-$clientId = "e8be624e-3836-4330-9222-6022aa6a7964"
-$tenantId = "2e114308-14ec-4d77-b610-490324fa1844"
+$clientId = "xxxx-xxx-xxx-xxx"
+$tenantId = "xxxx-xxx-xxx-xxx"
 
 # Check if CSV file exists
 if (-not (Test-Path -Path $CsvPath)) {
