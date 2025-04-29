@@ -19,6 +19,9 @@ param (
 )
 
 # Azure AD App Registration details
+#$clientId = "xxxx-xxx-xxx-xxx"
+#$tenantId = "xxxx-xxx-xxx-xxx"
+
 $clientId = "xxxx-xxx-xxx-xxx"
 $tenantId = "xxxx-xxx-xxx-xxx"
 
