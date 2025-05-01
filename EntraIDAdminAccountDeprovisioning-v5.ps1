@@ -22,6 +22,12 @@
     .\EntraIDAdminAccountDeprovisioning-Fixed.ps1 -AdminUPN "adm.john.doe@contoso.com" -DryRun
 .EXAMPLE
     .\EntraIDAdminAccountDeprovisioning-Fixed.ps1 -AdminUPN "adm.john.doe@contoso.com" -CheckOnly
+.NOTES
+    Author Links:
+    - LinkedIn: https://www.linkedin.com/in/hanschrandersen/
+    - GitHub: https://github.com/codeandersen
+    - Twitter: https://x.com/dk_hcandersen
+    - Homepage: https://www.hcandersen.net
 #>
 
 [CmdletBinding()]
