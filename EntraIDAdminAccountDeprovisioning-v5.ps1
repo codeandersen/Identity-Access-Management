@@ -13,15 +13,15 @@
 .PARAMETER CheckOnly
     If specified along with AdminUPN, the script will only check if the admin account has a corresponding standard account without performing any actions.
 .EXAMPLE
-    .\EntraIDAdminAccountDeprovisioning-Fixed.ps1
+    .\EntraIDAdminAccountDeprovisioning-v5.ps1
 .EXAMPLE
-    .\EntraIDAdminAccountDeprovisioning-Fixed.ps1 -DryRun
+    .\EntraIDAdminAccountDeprovisioning-v5.ps1 -DryRun
 .EXAMPLE
-    .\EntraIDAdminAccountDeprovisioning-Fixed.ps1 -AdminUPN "adm.john.doe@contoso.com"
+    .\EntraIDAdminAccountDeprovisioning-v5.ps1 -AdminUPN "adm.john.doe@contoso.com"
 .EXAMPLE
-    .\EntraIDAdminAccountDeprovisioning-Fixed.ps1 -AdminUPN "adm.john.doe@contoso.com" -DryRun
+    .\EntraIDAdminAccountDeprovisioning-v5.ps1 -AdminUPN "adm.john.doe@contoso.com" -DryRun
 .EXAMPLE
-    .\EntraIDAdminAccountDeprovisioning-Fixed.ps1 -AdminUPN "adm.john.doe@contoso.com" -CheckOnly
+    .\EntraIDAdminAccountDeprovisioning-v5.ps1 -AdminUPN "adm.john.doe@contoso.com" -CheckOnly
 .NOTES
     Author Links:
     - LinkedIn: https://www.linkedin.com/in/hanschrandersen/
