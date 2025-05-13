@@ -43,8 +43,10 @@ param (
 )
 
 # Azure AD App Registration details
-$clientId = "xxxxxxxxx"
-$tenantId = "xxxxxxxxx"
+#$clientId = "xxxxxxxxx"
+#$tenantId = "xxxxxxxxx"
+$clientId = "e8be624e-3836-4330-9222-6022aa6a7964"
+$tenantId = "2e114308-14ec-4d77-b610-490324fa1844"
 
 
 # Extension attribute name for AdminEmployeeId
