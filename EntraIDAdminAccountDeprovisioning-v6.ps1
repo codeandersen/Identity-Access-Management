@@ -39,12 +39,17 @@ param (
     [string]$AdminUPN,
     
     [Parameter()]
-    [switch]$CheckOnly
+    [switch]$CheckOnly,
+
+    [Parameter()]
+    [string]$CertificateThumbprint
 )
 
 # Azure AD App Registration details
-$clientId = "xxxxxxxxx"
-$tenantId = "xxxxxxxxx"
+#$clientId = "xxxxxxxxx"
+#$tenantId = "xxxxxxxxx"
+$clientId = "71f6c44e-27e3-43ca-b395-630bc43f87ae"
+$tenantId = "2e114308-14ec-4d77-b610-490324fa1844"
 
 
 # Extension attribute name for AdminEmployeeId
@@ -54,10 +59,15 @@ $adminEmployeeIdExtension = "extension_a544ff8b2a174ce0afe606d7cfa8aaa0_AdminEmp
 function Connect-ToMgGraph {
     try {
         [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
-        # Connect to Microsoft Graph
-        Connect-MgGraph -ClientId $clientId -TenantId $tenantId -Scopes "User.ReadWrite.All", "Directory.ReadWrite.All" -NoWelcome
-        
-        Write-Host "Connected to Microsoft Graph using beta API version" -ForegroundColor Green
+        if ($CertificateThumbprint) {
+            # App-only authentication with certificate (do NOT use -Scopes)
+            Connect-MgGraph -ClientId $clientId -TenantId $tenantId -CertificateThumbprint $CertificateThumbprint -NoWelcome
+            Write-Host "Connected to Microsoft Graph using service principal and certificate" -ForegroundColor Green
+        } else {
+            # Interactive fallback (delegated, requires -Scopes)
+            Connect-MgGraph -ClientId $clientId -TenantId $tenantId -Scopes "User.ReadWrite.All", "Directory.ReadWrite.All" -NoWelcome
+            Write-Host "Connected to Microsoft Graph using beta API version (interactive)" -ForegroundColor Green
+        }
         return $true
     }
     catch {
@@ -75,6 +85,82 @@ function Disconnect-FromMgGraph {
     catch {
         Write-Error "Error disconnecting from Microsoft Graph: $_"
     }
+}
+
+# Function to send notification email for admin account actions
+function Send-AdminAccountNotification {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Recipient,
+        [Parameter(Mandatory=$true)]
+        [string]$AdminUPN,
+        [Parameter(Mandatory=$true)]
+        [string]$Action, # 'Would be deleted' or 'Deleted'
+        [Parameter(Mandatory=$false)]
+        [string]$Reason
+    )
+    
+    # Compose subject and body
+    $subject = "[IAM] Admin Account ${Action}: ${AdminUPN}"
+    $bodyContent = "This is an automated notification from the EntraIDAdminAccountDeprovisioning script.<br><br>"
+    $bodyContent += "Admin account: $AdminUPN<br>"
+    $bodyContent += "Action: $Action<br>"
+    $bodyContent += "Reason: $Reason<br><br>"
+    $bodyContent += "This is a test notification. Please review the account as needed."
+
+    # Log the notification to console
+    Write-Host "" -ForegroundColor Cyan
+    Write-Host "  ---- EMAIL NOTIFICATION ----" -ForegroundColor Cyan
+    Write-Host "  To: $Recipient" -ForegroundColor Cyan
+    Write-Host "  Subject: $subject" -ForegroundColor Cyan
+    Write-Host "  Body: $bodyContent" -ForegroundColor Cyan
+    Write-Host "  ---- END NOTIFICATION ----" -ForegroundColor Cyan
+    Write-Host "" -ForegroundColor Cyan
+    
+    # For now, we'll just log the notification without sending actual emails
+    # This ensures the script runs smoothly while you configure the email sending capability
+    
+    # When you're ready to enable actual email sending, uncomment the code below
+    # and ensure your service principal has the Mail.Send permission
+    
+    <#
+    # Get a fresh token specifically for sending mail
+    try {
+        # Configure mail settings
+        $mailSender = "sp-iam-admin-deprovisioning@stark.dk"  # This should be a mailbox your service principal can access
+        
+        # Define the email message JSON
+        $messageJson = @"
+{
+    "message": {
+        "subject": "$subject",
+        "body": {
+            "contentType": "HTML",
+            "content": "$bodyContent"
+        },
+        "toRecipients": [
+            {
+                "emailAddress": {
+                    "address": "$Recipient"
+                }
+            }
+        ]
+    },
+    "saveToSentItems": "false"
+}
+"@
+        
+        # Send the email using Graph API
+        $sendMailUrl = "https://graph.microsoft.com/v1.0/users/$mailSender/sendMail"
+        
+        # Use the existing Graph connection
+        Invoke-MgGraphRequest -Method POST -Uri $sendMailUrl -Body $messageJson
+        Write-Host "  Notification sent for $AdminUPN ($Action) to $Recipient" -ForegroundColor Cyan
+    }
+    catch {
+        Write-Host "  Failed to send notification for ${AdminUPN}: $($_.Exception.Message)" -ForegroundColor Red
+    }
+    #>
 }
 
 # Function to get all admin accounts
@@ -454,7 +540,7 @@ $PSDefaultParameterValues['Export-Csv:Encoding'] = 'utf8'
 
 # Connect to Microsoft Graph
 Write-Host "Connecting to Microsoft Graph..." -ForegroundColor Cyan
-$connected = Connect-ToMgGraph
+$connected = Connect-ToMgGraph -CertificateThumbprint $CertificateThumbprint
 if (-not $connected) {
     Write-Error "Failed to authenticate to Microsoft Graph. Exiting script."
     exit 1
@@ -613,6 +699,9 @@ foreach ($adminAccount in $adminAccounts) {
             Write-Host "  [DRY RUN] Would delete admin account: $adminUPN" -ForegroundColor Yellow
             $successCount++
             
+            # Send notification (test phase)
+            Send-AdminAccountNotification -Recipient "hans.christian.andersen@stark.dk" -AdminUPN $adminUPN -Action "Would be deleted" -Reason "No matching normal account"
+            
             $result = [PSCustomObject]@{
                 AdminUPN = $adminUPN
                 Action = "Would be deleted"
@@ -629,6 +718,9 @@ foreach ($adminAccount in $adminAccounts) {
                 Remove-MgUser -UserId $adminAccount.Id
                 Write-Host "  Deleted admin account: $adminUPN" -ForegroundColor Green
                 $successCount++
+                
+                # Send notification (actual deletion)
+                Send-AdminAccountNotification -Recipient "hans.christian.andersen@stark.dk" -AdminUPN $adminUPN -Action "Deleted" -Reason "No matching normal account"
                 
                 $result = [PSCustomObject]@{
                     AdminUPN = $adminUPN
