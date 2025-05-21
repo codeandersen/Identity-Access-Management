@@ -36,6 +36,7 @@ $clientId = "71f6c44e-27e3-43ca-b395-630bc43f87ae"
 $tenantId = "2e114308-14ec-4d77-b610-490324fa1844"
 $CertificateThumbprint = "00d0850a07735ea7ce2fd7339213b89e9a0c2757"
 $dryrunValue = $True
+$debugMode = $false # Set to true for detailed debugging output
 
     # Handle different types for dryrun value
     if ($dryrunValue -is [System.Management.Automation.SwitchParameter]) {
@@ -51,6 +52,9 @@ $dryrunValue = $True
 
     Write-Host "Retrieved automation variables: ClientId and TenantId set" -ForegroundColor Cyan
     Write-Host "DryRun mode: $(if ($DryRun) { '`$true - No accounts will be deleted' } else { '`$false - Accounts will be deleted' })" -ForegroundColor $(if ($DryRun) { 'Yellow' } else { 'Green' })
+    if ($debugMode) {
+        Write-Host "Debug mode: Enabled - Detailed logging will be shown" -ForegroundColor Cyan
+    }
 } catch {
     Write-Error "Failed to get required variables from Automation Account: $_"
     throw "Missing required Automation Account variables. Please ensure clientId, tenantId, and dryrun are set."
@@ -65,14 +69,22 @@ function Connect-ToMgGraph {
     try {
         [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
         if ($CertificateThumbprint) {
-            # App-only authentication with certificate (do NOT use -Scopes)
-            Connect-MgGraph -ClientId $clientId -TenantId $tenantId -CertificateThumbprint $CertificateThumbprint -NoWelcome
-            Write-Host "Connected to Microsoft Graph using service principal and certificate" -ForegroundColor Green
-        } else {
-            # Interactive fallback (delegated, requires -Scopes)
-            Connect-MgGraph -ClientId $clientId -TenantId $tenantId -Scopes "User.ReadWrite.All", "Directory.ReadWrite.All" -NoWelcome
-            Write-Host "Connected to Microsoft Graph using beta API version (interactive)" -ForegroundColor Green
+            try {
+                # App-only authentication with certificate (do NOT use -Scopes)
+                Connect-MgGraph -ClientId $clientId -TenantId $tenantId -CertificateThumbprint $CertificateThumbprint -NoWelcome
+                Write-Host "Connected to Microsoft Graph using service principal and certificate" -ForegroundColor Green
+                return $true
+            }
+            catch {
+                Write-Host "Certificate authentication failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                Write-Host "Falling back to interactive authentication..." -ForegroundColor Yellow
+                # Fall through to interactive auth
+            }
         }
+        
+        # Interactive fallback (delegated, requires -Scopes)
+        Connect-MgGraph -Scopes "User.ReadWrite.All", "Directory.ReadWrite.All" -NoWelcome
+        Write-Host "Connected to Microsoft Graph using interactive authentication" -ForegroundColor Green
         return $true
     }
     catch {
@@ -95,13 +107,12 @@ function Disconnect-FromMgGraph {
 # Function to send notification email for admin account actions
 function Send-AdminAccountNotification {
     param(
-        [Parameter(Mandatory=$true)]
         [string]$Recipient,
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         [string]$AdminUPN,
-        [Parameter(Mandatory=$true)]
+        [Parameter(Mandatory = $true)]
         [string]$Action, # 'Would be deleted' or 'Deleted'
-        [Parameter(Mandatory=$false)]
+        [Parameter(Mandatory = $false)]
         [string]$Reason
     )
     
@@ -165,6 +176,10 @@ function Get-AdminAccounts {
     try {
         # Get all admin accounts first with a simple filter
         $filter = "startsWith(userPrincipalName, 'adm.') or startsWith(userPrincipalName, 'ext.adm.')"
+        if ($debugMode) {
+            Write-Host "Filter: $filter" -ForegroundColor Cyan
+        }
+        
         $allAdminAccounts = Get-MgUser -Filter $filter -Property "UserPrincipalName,DisplayName,Id,OnPremisesSyncEnabled" -All
         
         # Filter out AD synchronized accounts - cloud-only accounts have OnPremisesSyncEnabled as null or false
@@ -185,13 +200,26 @@ function Get-PrimaryAccounts {
     
     # First try using the advanced filter with ConsistencyLevel
     try {
-        Write-Host "Attempting to get primary accounts using advanced filter..."
+        if ($debugMode) {
+            Write-Host "Attempting to get primary accounts using advanced filter..." -ForegroundColor Cyan
+        }
         $filter = "not(startsWith(userPrincipalName, 'adm.')) and not(startsWith(userPrincipalName, 'ext.adm.'))"
-        Write-Host "Filter: $filter"
-        
+        if ($debugMode) {
+            Write-Host "Filter: $filter" -ForegroundColor Cyan
+        }
+       
         $primaryAccounts = Get-MgUser -Filter $filter -Property "UserPrincipalName,DisplayName,EmployeeId,Id" -All -ConsistencyLevel "eventual" -Count userCount -ErrorAction Stop
         
-        Write-Host "Successfully retrieved $($primaryAccounts.Count) primary accounts using advanced filter"
+        # Verify that the accounts have the required properties
+        $sampleAccount = $primaryAccounts | Select-Object -First 1
+        if ($debugMode) {
+            Write-Host "Sample primary account properties:" -ForegroundColor Cyan
+            Write-Host "  UserPrincipalName: '$($sampleAccount.UserPrincipalName)'" -ForegroundColor Cyan
+            Write-Host "  EmployeeId: '$($sampleAccount.EmployeeId)'" -ForegroundColor Cyan
+            Write-Host "  Id: '$($sampleAccount.Id)'" -ForegroundColor Cyan
+        }
+
+        Write-Host "Successfully retrieved $($primaryAccounts.Count) primary accounts using advanced filter" -ForegroundColor Green
         return $primaryAccounts
     }
     catch {
@@ -211,7 +239,7 @@ function Get-PrimaryAccounts {
                 -not ($_.UserPrincipalName -like 'adm.*') -and -not ($_.UserPrincipalName -like 'ext.adm.*')
             }
             
-            Write-Host "Successfully found $($primaryAccounts.Count) primary accounts using alternative method"
+            Write-Host "Successfully found $($primaryAccounts.Count) primary accounts using alternative method" -ForegroundColor Green
             return $primaryAccounts
         }
         catch {
@@ -235,7 +263,9 @@ function Get-AdminEmployeeId {
     $adminUPN = $AdminAccount.UserPrincipalName
     
     try {
-        Write-Host "  Getting AdminEmployeeId for account: $adminUPN"
+        if ($debugMode) {
+            Write-Host "  Getting AdminEmployeeId for account: $adminUPN"
+        }
         
         # Use beta endpoint to get extension attributes
         $apiUrl = "beta/users/$adminUPN"
@@ -255,7 +285,9 @@ function Get-AdminEmployeeId {
             }
         }
         
-        Write-Host "  No AdminEmployeeId found for account: $adminUPN"
+        if ($debugMode) {
+            Write-Host "  No AdminEmployeeId found for account: $adminUPN"
+        }
         return $null
     }
     catch {
@@ -263,6 +295,33 @@ function Get-AdminEmployeeId {
         Write-Host "  Error getting AdminEmployeeId for account '$adminUPN': $errorMessage" -ForegroundColor Red
         return $null
     }
+}
+
+# Global variable to cache all users
+$Global:AllUsersCache = $null
+
+# Function to get all users and cache them
+function Get-AllUsersCache {
+    # Check if the cache is already populated
+    if ($null -ne $Global:AllUsersCache -and $Global:AllUsersCache.Count -gt 0) {
+        return $Global:AllUsersCache
+    }
+    
+    # Cache is not populated, retrieve all users
+    Write-Host "Retrieving and caching all users from Microsoft Graph..." -ForegroundColor Cyan
+    try {
+        $Global:AllUsersCache = Get-MgUser -All -Property "UserPrincipalName,DisplayName,EmployeeId,Id" -ErrorAction Stop
+        if ($debugMode) {
+            Write-Host "Successfully cached $($Global:AllUsersCache.Count) users" -ForegroundColor Green
+        } else {
+            Write-Host "Users cached successfully" -ForegroundColor Green
+        }
+    } catch {
+        Write-Error "Error retrieving all users: $_"
+        $Global:AllUsersCache = @()
+    }
+    
+    return $Global:AllUsersCache
 }
 
 # Function to find a primary account matching an admin account
@@ -276,7 +335,9 @@ function Find-MatchingPrimaryAccount {
     )
     
     $adminUPN = $AdminAccount.UserPrincipalName
-    Write-Host "Processing admin account: $adminUPN" -ForegroundColor Yellow
+    if ($debugMode) {
+        Write-Host "Processing admin account: $adminUPN" -ForegroundColor Yellow
+    }
     
     # Extract the normalized UPN from the admin UPN
     $normalizedUPN = $null
@@ -287,7 +348,9 @@ function Find-MatchingPrimaryAccount {
         $username = $matches[1]
         $domain = $matches[2]
         $normalizedUPN = "$username@$domain"
-        Write-Host "  Extracted normalized UPN: $normalizedUPN" -ForegroundColor Yellow
+        if ($debugMode) {
+            Write-Host "  Extracted normalized UPN: $normalizedUPN" -ForegroundColor Yellow
+        }
     }
     # For pattern like ext.adm.username@domain.com
     elseif ($adminUPN -match '^ext\.adm\.(.*?)@(.*)$') {
@@ -295,7 +358,9 @@ function Find-MatchingPrimaryAccount {
         $username = $matches[1]
         $domain = $matches[2]
         $normalizedUPN = "$username@$domain"
-        Write-Host "  Extracted normalized UPN: $normalizedUPN" -ForegroundColor Yellow
+        if ($debugMode) {
+            Write-Host "  Extracted normalized UPN: $normalizedUPN" -ForegroundColor Yellow
+        }
     }
     # For pattern like adm.username@domain.com
     elseif ($adminUPN -match '^adm\.(.*?)@(.*)$') {
@@ -303,99 +368,386 @@ function Find-MatchingPrimaryAccount {
         $username = $matches[1]
         $domain = $matches[2]
         $normalizedUPN = "$username@$domain"
-        Write-Host "  Extracted normalized UPN: $normalizedUPN" -ForegroundColor Yellow
+        if ($debugMode) {
+            Write-Host "  Extracted normalized UPN: $normalizedUPN" -ForegroundColor Yellow
+        }
     }
     
     # Get the AdminEmployeeId from the admin account
     $adminEmployeeId = Get-AdminEmployeeId -AdminAccount $AdminAccount
     
-    # If we don't have primary accounts already, get them now
-    if (-not $PrimaryAccounts) {
-        Write-Host "  Getting all primary accounts..." -ForegroundColor Yellow
-        $filter = "not(startsWith(userPrincipalName, 'adm.')) and not(startsWith(userPrincipalName, 'ext.adm.'))"
-        try {
-            $PrimaryAccounts = Get-MgUser -Filter $filter -Property "UserPrincipalName,DisplayName,EmployeeId,Id" -All -ConsistencyLevel "eventual" -ErrorAction Stop
-            Write-Host "  Retrieved $($PrimaryAccounts.Count) primary accounts" -ForegroundColor Yellow
-        }
-        catch {
-            Write-Host "  Error getting primary accounts: $($_.Exception.Message)" -ForegroundColor Red
-            # Fallback to getting all users and filtering client-side
-            $allUsers = Get-MgUser -Property "UserPrincipalName,DisplayName,EmployeeId,Id" -All
-            $PrimaryAccounts = $allUsers | Where-Object { 
-                -not ($_.UserPrincipalName -like 'adm.*') -and -not ($_.UserPrincipalName -like 'ext.adm.*') 
-            }
-            Write-Host "  Retrieved $($PrimaryAccounts.Count) primary accounts using fallback method" -ForegroundColor Yellow
-        }
-    }
-    
-    # Main matching logic
+    # First try to match by employeeId using the alternative approach (client-side filtering)
     if ($adminEmployeeId) {
-        Write-Host "  Admin account employeeId: $adminEmployeeId" -ForegroundColor Yellow
+        if ($debugMode) {
+            Write-Host "  Admin account employeeId: $adminEmployeeId" -ForegroundColor Yellow
+        }
         
-        # Try to find by exact employeeId match
-        $matchingAccounts = $PrimaryAccounts | Where-Object { $_.EmployeeId -eq $adminEmployeeId }
-        
-        if ($matchingAccounts -and $matchingAccounts.Count -gt 0) {
-            # Get the first matching account
-            $matchedAccount = $matchingAccounts[0]
-            
-            # Debug the matched account properties
-            Write-Host "  DEBUG: Matched account properties:" -ForegroundColor Magenta
-            Write-Host "    UserPrincipalName: '$($matchedAccount.UserPrincipalName)'" -ForegroundColor Magenta
-            Write-Host "    DisplayName: '$($matchedAccount.DisplayName)'" -ForegroundColor Magenta
-            Write-Host "    EmployeeId: '$($matchedAccount.EmployeeId)'" -ForegroundColor Magenta
-            Write-Host "    Id: '$($matchedAccount.Id)'" -ForegroundColor Magenta
-            
-            # Force a direct lookup of the account by ID to get complete properties
-            try {
-                $fullAccount = Get-MgUser -UserId $matchedAccount.Id -ErrorAction Stop
-                Write-Host "  Found $($matchingAccounts.Count) primary accounts with matching employeeId: $($fullAccount.UserPrincipalName)" -ForegroundColor Green
-                return $fullAccount
+        # Use the alternative approach with client-side filtering as the primary method
+        try {
+            if ($debugMode) {
+                Write-Host "  Using client-side filtering to find primary account..." -ForegroundColor Yellow
             }
-            catch {
-                Write-Host "  Error getting full account details: $($_.Exception.Message)" -ForegroundColor Red
-                Write-Host "  Found $($matchingAccounts.Count) primary accounts with matching employeeId: $($matchedAccount.UserPrincipalName)" -ForegroundColor Green
             
-            # Get the full account details to ensure we have all properties
-            if (-not [string]::IsNullOrEmpty($matchedAccount.UserPrincipalName)) {
-                try {
-                    $fullAccount = Get-MgUser -UserId $matchedAccount.UserPrincipalName -ErrorAction SilentlyContinue
-                    if ($fullAccount) {
-                        Write-Host "  Retrieved full account details for: $($fullAccount.UserPrincipalName)" -ForegroundColor Green
-                        return $fullAccount
+            # Get all users from cache
+            $allUsers = Get-AllUsersCache
+            
+            if ($null -ne $allUsers) {
+                # Normalize the admin employee ID (trim spaces)
+                $normalizedAdminEmployeeId = $adminEmployeeId.Trim()
+                
+                # Find users with matching employee ID using simple string comparison
+                $usersWithEmployeeId = @()
+                foreach ($user in $allUsers) {
+                    if ($null -ne $user.EmployeeId -and $user.EmployeeId.ToString().Trim() -eq $normalizedAdminEmployeeId) {
+                        $usersWithEmployeeId += $user
                     }
                 }
-                catch {
-                    Write-Host "  Error retrieving full account details: $($_.Exception.Message)" -ForegroundColor Red
+                
+                if ($debugMode) {
+                    Write-Host "  DEBUG: Found $($usersWithEmployeeId.Count) users with employeeId '$normalizedAdminEmployeeId'" -ForegroundColor Magenta
+                } else {
+                    # Minimal output for production use
+                    if ($usersWithEmployeeId.Count -gt 0) {
+                        Write-Host "  Found $($usersWithEmployeeId.Count) users with matching employeeId" -ForegroundColor Cyan
+                    }
                 }
+                
+                if ($usersWithEmployeeId.Count -gt 0) {
+                    # Get the first matching user
+                    $firstMatch = $usersWithEmployeeId[0]
+                    
+                    # Log basic info about the match only in debug mode
+                    if ($debugMode) {
+                        Write-Host "  DEBUG: First matching user by employeeId:" -ForegroundColor Magenta
+                        
+                        # Only try to access properties if the object is not null
+                        if ($null -ne $firstMatch) {
+                            Write-Host "    UserPrincipalName: '$($firstMatch.UserPrincipalName)'" -ForegroundColor Magenta
+                            Write-Host "    DisplayName: '$($firstMatch.DisplayName)'" -ForegroundColor Magenta
+                            Write-Host "    EmployeeId: '$($firstMatch.EmployeeId)'" -ForegroundColor Magenta
+                        } else {
+                            Write-Host "    Object is null" -ForegroundColor Red
+                        }
+                    }
+                    
+                    # Find primary accounts (non-admin) among the matching users
+                    $primaryMatches = @()
+                    foreach ($user in $usersWithEmployeeId) {
+                        if ($null -ne $user -and $null -ne $user.UserPrincipalName) {
+                            $upn = $user.UserPrincipalName.ToString()
+                            if (-not [string]::IsNullOrWhiteSpace($upn) -and
+                                -not ($upn -like 'adm.*') -and
+                                -not ($upn -like 'ext.adm.*')) {
+                                $primaryMatches += $user
+                            }
+                        }
+                    }
+                    
+                    if ($primaryMatches.Count -gt 0) {
+                        $primaryAccount = $primaryMatches[0]
+                        $upn = $primaryAccount.UserPrincipalName.ToString()
+                        
+                        Write-Host "  Found primary account match by employeeId: $upn, $($primaryAccount.EmployeeId)" -ForegroundColor Green
+                        
+                        if ($debugMode) {
+                            Write-Host "  DEBUG: Primary account details:" -ForegroundColor Green
+                            Write-Host "    UserPrincipalName: '$upn'" -ForegroundColor Green
+                            
+                            if ($null -ne $primaryAccount.DisplayName) {
+                                Write-Host "    DisplayName: '$($primaryAccount.DisplayName)'" -ForegroundColor Green
+                            }
+                            
+                            if ($null -ne $primaryAccount.EmployeeId) {
+                                Write-Host "    EmployeeId: '$($primaryAccount.EmployeeId)'" -ForegroundColor Green
+                            }
+                        }
+                        
+                        return $primaryAccount
+                    }
+                }
+                
+                # Normalize the admin employee ID (trim spaces)
+                $normalizedAdminEmployeeId = $adminEmployeeId.Trim()
+                
+                # Filter for matching employeeId and non-admin accounts with more flexible matching
+                $matchingUsers = $allUsers | Where-Object { 
+                    $null -ne $_.EmployeeId -and 
+                    ($_.EmployeeId.Trim() -eq $normalizedAdminEmployeeId) -and 
+                    $null -ne $_.UserPrincipalName -and
+                    -not ($_.UserPrincipalName -like 'adm.*') -and 
+                    -not ($_.UserPrincipalName -like 'ext.adm.*')
+                }
+                
+                # If no matches found, try a more flexible approach with the normalized UPN
+                if (-not $matchingUsers -or $matchingUsers.Count -eq 0) {
+                    if ($debugMode) {
+                        Write-Host "  No exact employeeId matches found, trying flexible matching..." -ForegroundColor Yellow
+                    }
+                    
+                    if ($normalizedUPN) {
+                        # Extract username part for more flexible matching
+                        $upnParts = $normalizedUPN -split '@'
+                        if ($upnParts.Count -eq 2) {
+                            $username = $upnParts[0]
+                            
+                            # Try to find accounts with similar username patterns
+                            $matchingUsers = $allUsers | Where-Object {
+                                $null -ne $_.UserPrincipalName -and
+                                $_.UserPrincipalName -like "$username@*" -and
+                                -not ($_.UserPrincipalName -like 'adm.*') -and 
+                                -not ($_.UserPrincipalName -like 'ext.adm.*')
+                            }
+                            
+                            if ($matchingUsers -and $matchingUsers.Count -gt 0) {
+                                if ($debugMode) {
+                                    Write-Host "  Found $($matchingUsers.Count) potential matches using flexible username matching" -ForegroundColor Yellow
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if ($matchingUsers -and $matchingUsers.Count -gt 0) {
+                    $matchedUser = $matchingUsers[0]
+                    
+                    # Verify that the matched user has valid properties
+                    if ($null -ne $matchedUser.UserPrincipalName -and $matchedUser.UserPrincipalName -ne '') {
+                        Write-Host "  Found primary account using client-side filtering: $($matchedUser.UserPrincipalName)" -ForegroundColor Green
+                        
+                        # Debug the matched account properties
+                        Write-Host "  DEBUG: Returned primary account:" -ForegroundColor Magenta
+                        Write-Host "    Type: $($matchedUser.GetType().FullName)" -ForegroundColor Magenta
+                        Write-Host "    UserPrincipalName: '$($matchedUser.UserPrincipalName)'" -ForegroundColor Magenta
+                        Write-Host "    DisplayName: '$($matchedUser.DisplayName)'" -ForegroundColor Magenta
+                        Write-Host "    EmployeeId: '$($matchedUser.EmployeeId)'" -ForegroundColor Magenta
+                        
+                        return $matchedUser
+                    }
+                } else {
+                    if ($debugMode) {
+                        Write-Host "  No primary account found using client-side filtering" -ForegroundColor Yellow
+                    }
+                }
+            } else {
+                Write-Host "  Failed to get cached users list" -ForegroundColor Red
             }
-            
-            return $matchedAccount
+        } catch {
+            if ($debugMode) {
+                Write-Host "  Error in client-side filtering approach: $($_.Exception.Message)" -ForegroundColor Red
+            }
         }
-        else {
-            Write-Host "  Found 0 primary accounts with matching employeeId" -ForegroundColor Yellow
+    } else {
+        if ($debugMode) {
+            Write-Host "  No AdminEmployeeId found for admin account: $adminUPN" -ForegroundColor Yellow
         }
-    }
-    else {
-        Write-Host "  No AdminEmployeeId found for admin account: $adminUPN" -ForegroundColor Yellow
     }
     
     # Fallback to UPN matching if no match by employeeId
     if ($normalizedUPN) {
-        Write-Host "  Looking for primary account with UPN: $normalizedUPN" -ForegroundColor Yellow
-        $upnMatch = $PrimaryAccounts | Where-Object { $_.UserPrincipalName -eq $normalizedUPN }
-        
-        if ($upnMatch) {
-            Write-Host "  Found primary account with matching UPN: $($upnMatch.UserPrincipalName)" -ForegroundColor Green
-            return $upnMatch
-        }
-        else {
-            Write-Host "  No primary account found with UPN: $normalizedUPN" -ForegroundColor Yellow
+        try {
+            if ($debugMode) {
+                Write-Host "  Looking for primary account with UPN: $normalizedUPN" -ForegroundColor Yellow
+            }
+            
+            # Get all users from cache
+            $allUsers = Get-AllUsersCache
+            
+            if ($null -ne $allUsers) {
+                # Extract username and domain parts for more flexible matching
+                $upnParts = $normalizedUPN -split '@'
+                if ($upnParts.Count -eq 2) {
+                    $username = $upnParts[0]
+                    $domain = $upnParts[1]
+                    
+                    # Direct string comparison for UPN matching
+                    $lowerNormalizedUPN = $normalizedUPN.ToLower()
+                    $lowerUsername = $username.ToLower()
+                    $lowerDomain = $domain.ToLower()
+                    
+                    # Find users with similar UPN using simple string comparison
+                    $similarUpnUsers = @()
+                    foreach ($user in $allUsers) {
+                        if ($null -ne $user -and $null -ne $user.UserPrincipalName) {
+                            $upn = $user.UserPrincipalName.ToString().ToLower()
+                            if ($upn -eq $lowerNormalizedUPN -or
+                                $upn -eq "$lowerUsername@$lowerDomain") {
+                                $similarUpnUsers += $user
+                            }
+                        }
+                    }
+                } else {
+                    # Fallback for unexpected UPN format
+                    $similarUpnUsers = @()
+                    foreach ($user in $allUsers) {
+                        if ($null -ne $user -and $null -ne $user.UserPrincipalName) {
+                            if ($user.UserPrincipalName.ToString().ToLower() -eq $normalizedUPN.ToLower()) {
+                                $similarUpnUsers += $user
+                            }
+                        }
+                    }
+                }
+                if ($debugMode) {
+                    Write-Host "  DEBUG: Found $($similarUpnUsers.Count) users with similar UPN to '$normalizedUPN'" -ForegroundColor Magenta
+                }
+                
+                if ($similarUpnUsers.Count -gt 0) {
+                    if ($debugMode) {
+                        Write-Host "  DEBUG: Top 3 similar UPN matches:" -ForegroundColor Magenta
+                        $topMatches = $similarUpnUsers | Select-Object -First 3
+                        foreach ($match in $topMatches) {
+                            Write-Host "    UPN: '$($match.UserPrincipalName)', EmployeeId: '$($match.EmployeeId)'" -ForegroundColor Magenta
+                        }
+                    }
+                    
+                    # Find primary accounts (non-admin) among the matching users
+                    $primaryMatches = @()
+                    foreach ($user in $similarUpnUsers) {
+                        if ($null -ne $user -and $null -ne $user.UserPrincipalName) {
+                            $upn = $user.UserPrincipalName.ToString()
+                            if (-not [string]::IsNullOrWhiteSpace($upn) -and
+                                -not ($upn -like 'adm.*') -and
+                                -not ($upn -like 'ext.adm.*')) {
+                                $primaryMatches += $user
+                            }
+                        }
+                    }
+                    
+                    if ($primaryMatches.Count -gt 0) {
+                        $primaryAccount = $primaryMatches[0]
+                        $upn = $primaryAccount.UserPrincipalName.ToString()
+                        
+                        Write-Host "  Found primary account match by UPN: $upn" -ForegroundColor Green
+                        
+                        if ($debugMode) {
+                            Write-Host "  DEBUG: Primary account details:" -ForegroundColor Green
+                            Write-Host "    UserPrincipalName: '$upn'" -ForegroundColor Green
+                            
+                            if ($null -ne $primaryAccount.DisplayName) {
+                                Write-Host "    DisplayName: '$($primaryAccount.DisplayName)'" -ForegroundColor Green
+                            }
+                            
+                            if ($null -ne $primaryAccount.EmployeeId) {
+                                Write-Host "    EmployeeId: '$($primaryAccount.EmployeeId)'" -ForegroundColor Green
+                            }
+                        }
+                        
+                        return $primaryAccount
+                    }
+                }
+                
+                # Extract username and domain parts for more flexible matching
+                $upnParts = $normalizedUPN -split '@'
+                if ($upnParts.Count -eq 2) {
+                    $username = $upnParts[0]
+                    $domain = $upnParts[1]
+                    
+                    # Filter for matching UPN (case-insensitive) and non-admin accounts
+                    $upnMatches = $allUsers | Where-Object { 
+                        $null -ne $_.UserPrincipalName -and
+                        ($_.UserPrincipalName -ieq $normalizedUPN -or
+                         # Try matching username and domain separately to handle case differences
+                         ($_.UserPrincipalName -imatch "^$username@.*$domain$" -or
+                          $_.UserPrincipalName -imatch "^$username@$domain$")) -and
+                        -not ($_.UserPrincipalName -like 'adm.*') -and 
+                        -not ($_.UserPrincipalName -like 'ext.adm.*')
+                    }
+                } else {
+                    # Fallback to exact matching if UPN format is unexpected
+                    $upnMatches = $allUsers | Where-Object { 
+                        $null -ne $_.UserPrincipalName -and
+                        $_.UserPrincipalName -ieq $normalizedUPN -and
+                        -not ($_.UserPrincipalName -like 'adm.*') -and 
+                        -not ($_.UserPrincipalName -like 'ext.adm.*')
+                    }
+                }
+                
+                # If no exact matches found, try a more flexible approach
+                if (-not $upnMatches -or $upnMatches.Count -eq 0) {
+                    if ($debugMode) {
+                        Write-Host "  No exact UPN matches found, trying flexible matching..." -ForegroundColor Yellow
+                    }
+                    
+                    # Extract username part for more flexible matching
+                    $upnParts = $normalizedUPN -split '@'
+                    if ($upnParts.Count -eq 2) {
+                        $username = $upnParts[0]
+                        
+                        # Try to find accounts with similar username patterns
+                        $upnMatches = $allUsers | Where-Object {
+                            $null -ne $_.UserPrincipalName -and
+                            $_.UserPrincipalName -like "$username@*" -and
+                            -not ($_.UserPrincipalName -like 'adm.*') -and 
+                            -not ($_.UserPrincipalName -like 'ext.adm.*')
+                        }
+                        
+                        if ($upnMatches -and $upnMatches.Count -gt 0) {
+                            if ($debugMode) {
+                                Write-Host "  Found $($upnMatches.Count) potential matches using flexible username matching" -ForegroundColor Yellow
+                            }
+                        }
+                    }
+                }
+                
+                if ($upnMatches -and $upnMatches.Count -gt 0) {
+                    $matchedUser = $upnMatches[0]
+                    
+                    # Verify that the matched user has valid properties
+                    if ($null -ne $matchedUser.UserPrincipalName -and $matchedUser.UserPrincipalName -ne '') {
+                        Write-Host "  Found primary account with matching UPN: $($matchedUser.UserPrincipalName)" -ForegroundColor Green
+                        
+                        # Debug the matched account properties
+                        Write-Host "  DEBUG: Returned primary account:" -ForegroundColor Magenta
+                        Write-Host "    Type: $($matchedUser.GetType().FullName)" -ForegroundColor Magenta
+                        Write-Host "    UserPrincipalName: '$($matchedUser.UserPrincipalName)'" -ForegroundColor Magenta
+                        Write-Host "    DisplayName: '$($matchedUser.DisplayName)'" -ForegroundColor Magenta
+                        Write-Host "    EmployeeId: '$($matchedUser.EmployeeId)'" -ForegroundColor Magenta
+                        
+                        return $matchedUser
+                    }
+                } else {
+                    if ($debugMode) {
+                        Write-Host "  No primary account found with UPN: $normalizedUPN" -ForegroundColor Yellow
+                    }
+                }
+            } else {
+                # Fallback to direct API call if cache failed
+                $filter = "userPrincipalName eq '$normalizedUPN'"
+                if ($debugMode) {
+                    Write-Host "  Cache failed, using direct API call with filter: $filter" -ForegroundColor Yellow
+                }
+                
+                $upnMatches = Get-MgUser -Filter $filter -Property "UserPrincipalName,DisplayName,EmployeeId,Id" -ErrorAction Stop
+                
+                if ($upnMatches) {
+                    Write-Host "  Found primary account with matching UPN: $($upnMatches.UserPrincipalName)" -ForegroundColor Green
+                    
+                    # Debug the matched account properties
+                    Write-Host "  DEBUG: Returned primary account:" -ForegroundColor Magenta
+                    Write-Host "    Type: $($upnMatches.GetType().FullName)" -ForegroundColor Magenta
+                    Write-Host "    UserPrincipalName: '$($upnMatches.UserPrincipalName)'" -ForegroundColor Magenta
+                    Write-Host "    DisplayName: '$($upnMatches.DisplayName)'" -ForegroundColor Magenta
+                    Write-Host "    EmployeeId: '$($upnMatches.EmployeeId)'" -ForegroundColor Magenta
+                    
+                    return $upnMatches
+                } else {
+                    if ($debugMode) {
+                        Write-Host "  No primary account found with UPN: $normalizedUPN" -ForegroundColor Yellow
+                    }
+                }
+            }
+        } catch {
+            if ($debugMode) {
+                Write-Host "  Error searching for primary account by UPN: $($_.Exception.Message)" -ForegroundColor Red
+            }
         }
     }
     
-    Write-Host "  No matching primary account found using any method" -ForegroundColor Red
-    return $null
+    # If we get here, no matching primary account was found
+    if ($debugMode) {
+        Write-Host "  No matching primary account found using any method" -ForegroundColor Red
+    }
+    Write-Host "  Admin account doesn't have a matching primary account" -ForegroundColor Red
+    return $null   
 }
 
 # Create output array
@@ -426,7 +778,20 @@ if ($adminAccounts.Count -eq 0) {
     exit 0
 }
 
-# Get all primary accounts for bulk processing
+# Initialize the user cache before processing admin accounts
+Write-Host "Initializing user cache..." -ForegroundColor Cyan
+$allUsersCache = Get-AllUsersCache
+
+# Debug: Show some sample users from the cache to verify data
+if ($debugMode) {
+    Write-Host "Sample users from cache:" -ForegroundColor Cyan
+    $sampleUsers = $Global:AllUsersCache | Select-Object -First 5
+    foreach ($user in $sampleUsers) {
+        Write-Host "  UserPrincipalName: '$($user.UserPrincipalName)', EmployeeId: '$($user.EmployeeId)'" -ForegroundColor Cyan
+    }
+}
+
+# Get all primary accounts for bulk processing (this will be used as a fallback)
 $primaryAccounts = Get-PrimaryAccounts
 
 # Process each admin account
@@ -436,7 +801,9 @@ $skippedCount = 0
 
 foreach ($adminAccount in $adminAccounts) {
     $adminUPN = $adminAccount.UserPrincipalName
-    Write-Host "Processing admin account: $adminUPN"
+    # Get the AdminEmployeeId for this admin account
+    $adminEmployeeId = Get-AdminEmployeeId -AdminAccount $adminAccount
+    Write-Host "Processing admin account: $adminUPN, $adminEmployeeId"
     
     # Skip on-premises synced accounts
     if ($adminAccount.OnPremisesSyncEnabled -eq $true) {
@@ -460,11 +827,13 @@ foreach ($adminAccount in $adminAccounts) {
     
     # Debug the returned primary account
     if ($primaryAccount) {
-        Write-Host "  DEBUG: Returned primary account:" -ForegroundColor Magenta
-        Write-Host "    Type: $($primaryAccount.GetType().FullName)" -ForegroundColor Magenta
-        Write-Host "    UserPrincipalName: '$($primaryAccount.UserPrincipalName)'" -ForegroundColor Magenta
-        Write-Host "    DisplayName: '$($primaryAccount.DisplayName)'" -ForegroundColor Magenta
-        Write-Host "    EmployeeId: '$($primaryAccount.EmployeeId)'" -ForegroundColor Magenta
+        if ($debugMode) {
+            Write-Host "  DEBUG: Returned primary account:" -ForegroundColor Magenta
+            Write-Host "    Type: $($primaryAccount.GetType().FullName)" -ForegroundColor Magenta
+            Write-Host "    UserPrincipalName: '$($primaryAccount.UserPrincipalName)'" -ForegroundColor Magenta
+            Write-Host "    DisplayName: '$($primaryAccount.DisplayName)'" -ForegroundColor Magenta
+            Write-Host "    EmployeeId: '$($primaryAccount.EmployeeId)'" -ForegroundColor Magenta
+        }
         
         # Check if the primary account has a valid UserPrincipalName
         if (-not [string]::IsNullOrEmpty($primaryAccount.UserPrincipalName)) {
@@ -535,8 +904,6 @@ foreach ($adminAccount in $adminAccounts) {
     }
     else {
         # Admin account doesn't have a matching primary account, delete it
-        Write-Host "  Admin account doesn't have a matching primary account" -ForegroundColor Red
-        
         if ($DryRun) {
             Write-Host "  [DRY RUN] Would delete admin account: $adminUPN" -ForegroundColor Yellow
             $successCount++
