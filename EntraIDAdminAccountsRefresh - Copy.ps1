@@ -75,82 +75,6 @@ function Get-StandardUPN {
     }
 }
 
-# Function to get a user's manager email using the beta Graph API
-function Get-ManagerEmail {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$UserUPN
-    )
-    try {
-        $apiUrl = "beta/users/$UserUPN/manager"
-        $managerData = Invoke-MgGraphRequest -Method GET -Uri $apiUrl
-        if ($managerData -and $managerData.mail) {
-            return $managerData.mail
-        }
-        return $null
-    } catch {
-        Write-Host ("  Error retrieving manager for {0} (standard account): {1}" -f $UserUPN, $_) -ForegroundColor Red
-        return $null
-    }
-}
-
-# Function to get the AdminManagerMail extension attribute from an admin account
-function Get-AdminManagerMail {
-    param (
-        [Parameter(Mandatory = $true)]
-        [object]$AdminAccount
-    )
-    $adminManagerMailExtension = 'extension_a544ff8b2a174ce0afe606d7cfa8aaa0_AdminManagerMail'
-    try {
-        $adminUPN = $AdminAccount.UserPrincipalName
-        $apiUrl = "beta/users/$adminUPN"
-        $userData = Invoke-MgGraphRequest -Method GET -Uri $apiUrl
-        if ($userData -and $userData.$adminManagerMailExtension) {
-            return $userData.$adminManagerMailExtension
-        }
-        if ($userData.extensions) {
-            foreach ($extension in $userData.extensions) {
-                if ($extension.ContainsKey($adminManagerMailExtension)) {
-                    return $extension.$adminManagerMailExtension
-                }
-            }
-        }
-        return $null
-    } catch {
-        Write-Host ("  Error retrieving AdminManagerMail extension for {0}: {1}" -f $adminUPN, $_) -ForegroundColor Red
-        return $null
-    }
-}
-
-# Function to get the AdminEmployeeId from an admin account
-function Get-AdminEmployeeId {
-    param (
-        [Parameter(Mandatory = $true)]
-        [object]$AdminAccount
-    )
-    $adminEmployeeIdExtension = 'extension_a544ff8b2a174ce0afe606d7cfa8aaa0_AdminEmployeeId'
-    try {
-        $adminUPN = $AdminAccount.UserPrincipalName
-        $apiUrl = "beta/users/$adminUPN"
-        $userData = Invoke-MgGraphRequest -Method GET -Uri $apiUrl
-        if ($userData -and $userData.$adminEmployeeIdExtension) {
-            return $userData.$adminEmployeeIdExtension
-        }
-        if ($userData.extensions) {
-            foreach ($extension in $userData.extensions) {
-                if ($extension.ContainsKey($adminEmployeeIdExtension)) {
-                    return $extension.$adminEmployeeIdExtension
-                }
-            }
-        }
-        return $null
-    } catch {
-        Write-Host "  Error retrieving AdminEmployeeId extension: $_" -ForegroundColor Red
-        return $null
-    }
-}
-
-
 # Create output array
 $results = @()
 
@@ -231,10 +155,9 @@ foreach ($adminAccount in $adminAccounts) {
             NewDepartment = $null
             CurrentAdminEmployeeId = $null
             NewAdminEmployeeId = $null
-            StandardManagerEmail = $null
-            AdminManagerMail = $null
             Status = "Skipped: On-premises synced account"
         }
+        
         $results += $result
         continue
     }
@@ -260,8 +183,6 @@ foreach ($adminAccount in $adminAccounts) {
             NewDepartment = $null
             CurrentAdminEmployeeId = $null
             NewAdminEmployeeId = $null
-            StandardManagerEmail = $null
-            AdminManagerMail = $null
             Status = "Error: Could not determine standard UPN"
         }
         
@@ -281,66 +202,67 @@ foreach ($adminAccount in $adminAccounts) {
         # Prepare update parameters
         $updateParams = @{}
         
-        # Get current extension attribute value using robust helper function
-        $currentAdminEmployeeId = Get-AdminEmployeeId -AdminAccount $adminAccount
-
-        # Get manager email for the standard account
-        $managerEmail = Get-ManagerEmail -UserUPN $standardUPN
-
-        # Get AdminManagerMail extension value from admin account
-        $adminManagerMail = Get-AdminManagerMail -AdminAccount $adminAccount
-
-        Write-Host "  Comparing admin and standard account values:" -ForegroundColor Cyan
-
-        function Show-Compare {
-            param (
-                [string]$Label,
-                $AdminValue,
-                $StandardValue
-            )
-            if ($AdminValue -ne $StandardValue) {
-                Write-Host "    ${Label}: ${AdminValue} -> ${StandardValue}" -ForegroundColor Yellow
-                return $true
-            } else {
-                Write-Host "    ${Label}: ${AdminValue} (no change)" -ForegroundColor Gray
-                return $false
-            }
+        # Only add non-empty values to the update parameters
+        if (-not [string]::IsNullOrEmpty($standardAccount.JobTitle)) {
+            $updateParams['JobTitle'] = $standardAccount.JobTitle
         }
-
-        $fieldsToCompare = @(
-            @{Label="JobTitle"; Admin=$adminAccount.JobTitle; Standard=$standardAccount.JobTitle; Param="JobTitle"},
-            @{Label="CompanyName"; Admin=$adminAccount.CompanyName; Standard=$standardAccount.CompanyName; Param="CompanyName"},
-            @{Label="OfficeLocation"; Admin=$adminAccount.OfficeLocation; Standard=$standardAccount.OfficeLocation; Param="OfficeLocation"},
-            @{Label="Department"; Admin=$adminAccount.Department; Standard=$standardAccount.Department; Param="Department"},
-            @{Label="EmployeeId"; Admin=$currentAdminEmployeeId; Standard=$standardAccount.EmployeeId; Param="extension_a544ff8b2a174ce0afe606d7cfa8aaa0_AdminEmployeeId"},
-            @{Label="ManagerMail"; Admin=$adminManagerMail; Standard=$managerEmail; Param="extension_a544ff8b2a174ce0afe606d7cfa8aaa0_AdminManagerMail"}
-        )
-
-        foreach ($field in $fieldsToCompare) {
-            $needsUpdate = Show-Compare -Label $field.Label -AdminValue $field.Admin -StandardValue $field.Standard
-            if ($needsUpdate) {
-                if ($field.Param -eq "extension_a544ff8b2a174ce0afe606d7cfa8aaa0_AdminEmployeeId") {
-                    $global:needsEmployeeIdUpdate = $true
-                    $global:newEmployeeIdValue = $field.Standard
-                } elseif ($field.Param -eq "extension_a544ff8b2a174ce0afe606d7cfa8aaa0_AdminManagerMail") {
-                    $updateParams[$field.Param] = $field.Standard
-                } else {
-                    $updateParams[$field.Param] = $field.Standard
-                }
-            }
+        
+        if (-not [string]::IsNullOrEmpty($standardAccount.CompanyName)) {
+            $updateParams['CompanyName'] = $standardAccount.CompanyName
         }
-
-
-        # Update admin account with standard account attributes and extension attributes if not in dry run mode
+        
+        if (-not [string]::IsNullOrEmpty($standardAccount.Department)) {
+            $updateParams['Department'] = $standardAccount.Department
+        }
+        
+        # Special handling for OfficeLocation - only include if it has a value
+        if (-not [string]::IsNullOrWhiteSpace($standardAccount.OfficeLocation)) {
+            $updateParams['OfficeLocation'] = $standardAccount.OfficeLocation
+        }
+        
+        # Get current extension attribute value
+        $currentAdminEmployeeId = $null
+        if ($adminAccount.AdditionalProperties -and 
+            $adminAccount.AdditionalProperties.ContainsKey('extension_a544ff8b2a174ce0afe606d7cfa8aaa0_AdminEmployeeId')) {
+            $currentAdminEmployeeId = $adminAccount.AdditionalProperties['extension_a544ff8b2a174ce0afe606d7cfa8aaa0_AdminEmployeeId']
+        }
+        
+        Write-Host "  Current admin account values:" -ForegroundColor Cyan
+        Write-Host "    JobTitle: $($adminAccount.JobTitle)" -ForegroundColor Cyan
+        Write-Host "    CompanyName: $($adminAccount.CompanyName)" -ForegroundColor Cyan
+        Write-Host "    OfficeLocation: $($adminAccount.OfficeLocation)" -ForegroundColor Cyan
+        Write-Host "    Department: $($adminAccount.Department)" -ForegroundColor Cyan
+        Write-Host "    AdminEmployeeId: $currentAdminEmployeeId" -ForegroundColor Cyan
+        
+        Write-Host "  Values that would be updated from standard account:" -ForegroundColor Cyan
+        Write-Host "    JobTitle: $($standardAccount.JobTitle)" -ForegroundColor Cyan
+        Write-Host "    CompanyName: $($standardAccount.CompanyName)" -ForegroundColor Cyan
+        Write-Host "    OfficeLocation: $($standardAccount.OfficeLocation)" -ForegroundColor Cyan
+        Write-Host "    Department: $($standardAccount.Department)" -ForegroundColor Cyan
+        Write-Host "    AdminEmployeeId: $($standardAccount.EmployeeId)" -ForegroundColor Cyan
+        
+        # Update admin account with standard account attributes if not in dry run mode
         if (-not $DryRun) {
             try {
                 # Only update if there are properties to update
                 if ($updateParams.Count -gt 0) {
-                    # Update all attributes, including extension attributes (AdminManagerMail, AdminEmployeeId, etc.)
+                    # First update the standard attributes
                     Update-MgUser -UserId $adminUPN -BodyParameter $updateParams
-                    Write-Host "  Successfully updated admin account with standard and extension attributes." -ForegroundColor Green
+                    Write-Host "  Successfully updated admin account with standard account attributes." -ForegroundColor Green
                 } else {
-                    Write-Host "  No attributes to update." -ForegroundColor Yellow
+                    Write-Host "  No standard attributes to update." -ForegroundColor Yellow
+                }
+                
+                # Then update the extension attribute separately if needed
+                if (-not [string]::IsNullOrEmpty($standardAccount.EmployeeId)) {
+                    # Use a separate API call to update the extension attribute
+                    $extensionUri = "https://graph.microsoft.com/v1.0/users/$adminUPN"
+                    $extensionBody = @{
+                        "extension_a544ff8b2a174ce0afe606d7cfa8aaa0_AdminEmployeeId" = $standardAccount.EmployeeId
+                    } | ConvertTo-Json
+                    
+                    Invoke-MgGraphRequest -Method PATCH -Uri $extensionUri -Body $extensionBody -ContentType "application/json"
+                    Write-Host "  Successfully updated admin account extension attribute with EmployeeId." -ForegroundColor Green
                 }
             }
             catch {
@@ -354,92 +276,58 @@ foreach ($adminAccount in $adminAccounts) {
             Write-Host "  [DRY RUN] Would update admin account with standard account attributes." -ForegroundColor Yellow
         }
         
-
-
-        # Determine status based on whether any updates are actually needed
-        if ($updateParams.Count -gt 0 -or $needsEmployeeIdUpdate -or $needsManagerMailUpdate) {
-            $status = if ($DryRun) { "Would Update" } else { "Updated" }
-        } else {
-            $status = "No Change"
-        }
         $result = [PSCustomObject]@{
             AdminUPN = $adminUPN
             StandardUPN = $standardUPN
             StandardAccountExists = $standardAccountExists
-            CurrentAdminJobTitle = $adminAccount.JobTitle
-            StandardAccountJobTitle = $standardAccount.JobTitle
-            CurrentAdminCompanyName = $adminAccount.CompanyName
-            StandardAccountCompanyName = $standardAccount.CompanyName
-            CurrentAdminOfficeLocation = $adminAccount.OfficeLocation
-            StandardAccountOfficeLocation = $standardAccount.OfficeLocation
-            CurrentAdminDepartment = $adminAccount.Department
-            StandardAccountDepartment = $standardAccount.Department
+            CurrentJobTitle = $adminAccount.JobTitle
+            NewJobTitle = $standardAccount.JobTitle
+            CurrentCompanyName = $adminAccount.CompanyName
+            NewCompanyName = $standardAccount.CompanyName
+            CurrentOfficeLocation = $adminAccount.OfficeLocation
+            NewOfficeLocation = $standardAccount.OfficeLocation
+            CurrentDepartment = $adminAccount.Department
+            NewDepartment = $standardAccount.Department
             CurrentAdminEmployeeId = $currentAdminEmployeeId
-            StandardAccountEmployeeId = $standardAccount.EmployeeId
-            CurrentAdminManagerMail = $adminManagerMail
-            StandardAccountManagerMail = $managerEmail
-            Status = $status
+            NewAdminEmployeeId = $standardAccount.EmployeeId
+            Status = if ($DryRun) { "Would Update" } else { "Updated" }
         }
-
+        
         $successCount++
-        $results += $result
     }
     catch {
         $errorMessage = $_.Exception.Message
-        if ($_.Exception.Response.StatusCode -eq 404 -or $errorMessage -like '*ResourceNotFound*') {
-            Write-Host "  Standard account does not exist for $standardUPN. Skipping." -ForegroundColor Yellow
-            $standardAccountExists = "No"
-            $currentAdminEmployeeId = Get-AdminEmployeeId -AdminAccount $adminAccount
-            $adminManagerMail = Get-AdminManagerMail -AdminAccount $adminAccount
-            $result = [PSCustomObject]@{
-                AdminUPN = $adminUPN
-                StandardUPN = $standardUPN
-                StandardAccountExists = $standardAccountExists
-                CurrentAdminJobTitle = $adminAccount.JobTitle
-                StandardAccountJobTitle = $null
-                CurrentAdminCompanyName = $adminAccount.CompanyName
-                StandardAccountCompanyName = $null
-                CurrentAdminOfficeLocation = $adminAccount.OfficeLocation
-                StandardAccountOfficeLocation = $null
-                CurrentAdminDepartment = $adminAccount.Department
-                StandardAccountDepartment = $null
-                CurrentAdminEmployeeId = $currentAdminEmployeeId
-                StandardAccountEmployeeId = $null
-                CurrentAdminManagerMail = $adminManagerMail
-                StandardAccountManagerMail = $null
-                Status = "Standard account does not exist"
-            }
-            $results += $result
-            $failureCount++
-            continue
-        } else {
-            Write-Host "  Error retrieving standard account: $errorMessage" -ForegroundColor Red
-            $standardAccountExists = "No"
-            $currentAdminEmployeeId = Get-AdminEmployeeId -AdminAccount $adminAccount
-            $managerEmail = Get-ManagerEmail -UserUPN $standardUPN
-            $adminManagerMail = Get-AdminManagerMail -AdminAccount $adminAccount
-            $result = [PSCustomObject]@{
-                AdminUPN = $adminUPN
-                StandardUPN = $standardUPN
-                StandardAccountExists = $standardAccountExists
-                CurrentAdminJobTitle = $adminAccount.JobTitle
-                StandardAccountJobTitle = $null
-                CurrentAdminCompanyName = $adminAccount.CompanyName
-                StandardAccountCompanyName = $null
-                CurrentAdminOfficeLocation = $adminAccount.OfficeLocation
-                StandardAccountOfficeLocation = $null
-                CurrentAdminDepartment = $adminAccount.Department
-                StandardAccountDepartment = $null
-                CurrentAdminEmployeeId = $currentAdminEmployeeId
-                StandardAccountEmployeeId = $null
-                CurrentAdminManagerMail = $adminManagerMail
-                StandardAccountManagerMail = $managerEmail
-                Status = "Error: $errorMessage"
-            }
-            $failureCount++
-            $results += $result
+        Write-Host "  Error processing account: $errorMessage" -ForegroundColor Red
+        $standardAccountExists = "No"
+        
+        # Get current extension attribute value
+        $currentAdminEmployeeId = $null
+        if ($adminAccount.AdditionalProperties -and 
+            $adminAccount.AdditionalProperties.ContainsKey('extension_a544ff8b2a174ce0afe606d7cfa8aaa0_AdminEmployeeId')) {
+            $currentAdminEmployeeId = $adminAccount.AdditionalProperties['extension_a544ff8b2a174ce0afe606d7cfa8aaa0_AdminEmployeeId']
         }
+        
+        $result = [PSCustomObject]@{
+            AdminUPN = $adminUPN
+            StandardUPN = $standardUPN
+            StandardAccountExists = $standardAccountExists
+            CurrentJobTitle = $adminAccount.JobTitle
+            NewJobTitle = $null
+            CurrentCompanyName = $adminAccount.CompanyName
+            NewCompanyName = $null
+            CurrentOfficeLocation = $adminAccount.OfficeLocation
+            NewOfficeLocation = $null
+            CurrentDepartment = $adminAccount.Department
+            NewDepartment = $null
+            CurrentAdminEmployeeId = $currentAdminEmployeeId
+            NewAdminEmployeeId = $null
+            Status = "Error: $errorMessage"
+        }
+        
+        $failureCount++
     }
+    
+    $results += $result
 }
 
 # Display summary
@@ -452,9 +340,8 @@ Write-Host "  Successfully processed: $successCount" -ForegroundColor Green
 Write-Host "  Failed to process: $failureCount" -ForegroundColor $(if ($failureCount -gt 0) { "Red" } else { "Green" })
 Write-Host "  Skipped (on-premises synced): $skippedCount" -ForegroundColor Yellow
 
-# Display all results as list for full details
-Write-Host "`nFull details for each account:" -ForegroundColor Cyan
-$results | Format-List *
+# Display results in console
+$results | Format-Table -AutoSize
 
 # Group results by status for better reporting
 $resultsByStatus = $results | Group-Object -Property Status
@@ -479,7 +366,6 @@ $outputPath = if ($DryRun) {
     "EntraIDAdminAccountsRefresh_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
 }
 $results | Export-Csv -Path $outputPath -NoTypeInformation -Encoding UTF8
-
 
 Write-Host "Results exported to: $outputPath" -ForegroundColor Cyan
 
