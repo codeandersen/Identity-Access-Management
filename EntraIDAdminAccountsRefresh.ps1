@@ -89,7 +89,7 @@ function Get-ManagerEmail {
         }
         return $null
     } catch {
-        Write-Host ("  Error retrieving manager for {0} (standard account): {1}" -f $UserUPN, $_) -ForegroundColor Red
+        Write-Host "  Manager field empty" -ForegroundColor Red
         return $null
     }
 }
@@ -219,20 +219,20 @@ foreach ($adminAccount in $adminAccounts) {
         
         $result = [PSCustomObject]@{
             AdminUPN = $adminUPN
-            StandardUPN = "N/A"
+            StandardAccountUPN = "N/A"
             StandardAccountExists = "N/A"
-            CurrentJobTitle = $adminAccount.JobTitle
-            NewJobTitle = $null
-            CurrentCompanyName = $adminAccount.CompanyName
-            NewCompanyName = $null
-            CurrentOfficeLocation = $adminAccount.OfficeLocation
-            NewOfficeLocation = $null
-            CurrentDepartment = $adminAccount.Department
-            NewDepartment = $null
-            CurrentAdminEmployeeId = $null
-            NewAdminEmployeeId = $null
-            StandardManagerEmail = $null
-            AdminManagerMail = $null
+            CurrentAdminAccountJobTitle = $adminAccount.JobTitle
+            StandardAccountJobTitle = $null
+            CurrentAdminAccountCompanyName = $adminAccount.CompanyName
+            StandardAccountCompanyName = $null
+            CurrentAdminAccountOfficeLocation = $adminAccount.OfficeLocation
+            StandardAccountOfficeLocation = $null
+            CurrentAdminAccountDepartment = $adminAccount.Department
+            StandardAccountDepartment = $null
+            CurrentAdminAccountEmployeeId = $null
+            StandardAccountEmployeeId = $null
+            StandardAccountManagerEmail = $null
+            CurrentAdminAccountManagerMail = $null
             Status = "Skipped: On-premises synced account"
         }
         $results += $result
@@ -248,20 +248,20 @@ foreach ($adminAccount in $adminAccounts) {
         
         $result = [PSCustomObject]@{
             AdminUPN = $adminUPN
-            StandardUPN = "Unknown"
+            StandardAccountUPN = "Unknown"
             StandardAccountExists = "Unknown"
-            CurrentJobTitle = $adminAccount.JobTitle
-            NewJobTitle = $null
-            CurrentCompanyName = $adminAccount.CompanyName
-            NewCompanyName = $null
-            CurrentOfficeLocation = $adminAccount.OfficeLocation
-            NewOfficeLocation = $null
-            CurrentDepartment = $adminAccount.Department
-            NewDepartment = $null
-            CurrentAdminEmployeeId = $null
-            NewAdminEmployeeId = $null
-            StandardManagerEmail = $null
-            AdminManagerMail = $null
+            CurrentAdminAccountJobTitle = $adminAccount.JobTitle
+            StandardAccountTitle = $null
+            CurrentAdminAccountCompanyName = $adminAccount.CompanyName
+            StandardAccountCompanyName = $null
+            CurrentAdminAccountOfficeLocation = $adminAccount.OfficeLocation
+            StandardAccountOfficeLocation = $null
+            CurrentAdminAccountDepartment = $adminAccount.Department
+            StandardAccountDepartment = $null
+            CurrentAdminAccountEmployeeId = $null
+            StandardAccountEmployeeId = $null
+            StandardAccountManagerEmail = $null
+            CurrentAdminAccountManagerMail = $null
             Status = "Error: Could not determine standard UPN"
         }
         
@@ -286,6 +286,9 @@ foreach ($adminAccount in $adminAccounts) {
 
         # Get manager email for the standard account
         $managerEmail = Get-ManagerEmail -UserUPN $standardUPN
+        if ([string]::IsNullOrEmpty($managerEmail)) {
+            $managerEmail = '<empty>'
+        }
 
         # Get AdminManagerMail extension value from admin account
         $adminManagerMail = Get-AdminManagerMail -AdminAccount $adminAccount
@@ -364,7 +367,7 @@ foreach ($adminAccount in $adminAccounts) {
         }
         $result = [PSCustomObject]@{
             AdminUPN = $adminUPN
-            StandardUPN = $standardUPN
+            StandardAccountUPN = $standardUPN
             StandardAccountExists = $standardAccountExists
             CurrentAdminJobTitle = $adminAccount.JobTitle
             StandardAccountJobTitle = $standardAccount.JobTitle
@@ -377,7 +380,7 @@ foreach ($adminAccount in $adminAccounts) {
             CurrentAdminEmployeeId = $currentAdminEmployeeId
             StandardAccountEmployeeId = $standardAccount.EmployeeId
             CurrentAdminManagerMail = $adminManagerMail
-            StandardAccountManagerMail = $managerEmail
+            StandardAccountManagerMail = if ([string]::IsNullOrEmpty($managerEmail)) { '<empty>' } else { $managerEmail }
             Status = $status
         }
 
@@ -393,7 +396,7 @@ foreach ($adminAccount in $adminAccounts) {
             $adminManagerMail = Get-AdminManagerMail -AdminAccount $adminAccount
             $result = [PSCustomObject]@{
                 AdminUPN = $adminUPN
-                StandardUPN = $standardUPN
+                StandardAccountUPN = $standardUPN
                 StandardAccountExists = $standardAccountExists
                 CurrentAdminJobTitle = $adminAccount.JobTitle
                 StandardAccountJobTitle = $null
@@ -406,7 +409,7 @@ foreach ($adminAccount in $adminAccounts) {
                 CurrentAdminEmployeeId = $currentAdminEmployeeId
                 StandardAccountEmployeeId = $null
                 CurrentAdminManagerMail = $adminManagerMail
-                StandardAccountManagerMail = $null
+                StandardAccountManagerMail = '<empty>'
                 Status = "Standard account does not exist"
             }
             $results += $result
@@ -420,7 +423,7 @@ foreach ($adminAccount in $adminAccounts) {
             $adminManagerMail = Get-AdminManagerMail -AdminAccount $adminAccount
             $result = [PSCustomObject]@{
                 AdminUPN = $adminUPN
-                StandardUPN = $standardUPN
+                StandardAccountUPN = $standardUPN
                 StandardAccountExists = $standardAccountExists
                 CurrentAdminJobTitle = $adminAccount.JobTitle
                 StandardAccountJobTitle = $null
@@ -433,7 +436,7 @@ foreach ($adminAccount in $adminAccounts) {
                 CurrentAdminEmployeeId = $currentAdminEmployeeId
                 StandardAccountEmployeeId = $null
                 CurrentAdminManagerMail = $adminManagerMail
-                StandardAccountManagerMail = $managerEmail
+                StandardAccountManagerMail = if ([string]::IsNullOrEmpty($managerEmail)) { '<empty>' } else { $managerEmail }
                 Status = "Error: $errorMessage"
             }
             $failureCount++
@@ -478,7 +481,7 @@ $outputPath = if ($DryRun) {
 } else {
     "EntraIDAdminAccountsRefresh_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
 }
-$results | Export-Csv -Path $outputPath -NoTypeInformation -Encoding UTF8
+$results | Export-Csv -Path $outputPath -NoTypeInformation -Encoding UNICODE
 
 
 Write-Host "Results exported to: $outputPath" -ForegroundColor Cyan
