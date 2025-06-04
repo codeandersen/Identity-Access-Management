@@ -19,8 +19,8 @@ param(
     corresponding standard accounts using the employeeID attribute, and deletes admin accounts if the standard accounts don't exist.
     
     The script is designed to run in Azure Automation and requires the following automation variables:
-    - clientId: The Azure AD application ID
-    - tenantId: The Azure AD tenant ID
+    - clientId: The Azure AD application ID.
+    - tenantId: The Azure AD tenant ID.
     - certificateThumbprint: The certificate thumbprint for authentication
     - dryrun: Boolean value to control whether accounts are actually deleted (True) or just simulated (False)
 .EXAMPLE
