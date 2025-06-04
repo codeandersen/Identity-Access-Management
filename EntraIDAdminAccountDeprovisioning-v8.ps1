@@ -1,5 +1,16 @@
 #Requires -Modules Microsoft.Graph.Authentication, Microsoft.Graph.Users, Microsoft.Graph.Beta.Users
 
+param(
+    [Parameter(Mandatory = $false)]
+    [switch]$DryRun = $false,
+    
+    [Parameter(Mandatory = $false)]
+    [string]$NotificationRecipient = "hans.christian.andersen@stark.dk",
+    
+    [Parameter(Mandatory = $false)]
+    [switch]$DebugMode = $false
+)
+
 <#
 .SYNOPSIS
     Identifies and deprovisions admin accounts without corresponding standard accounts.
@@ -25,44 +36,61 @@
     - Homepage: https://www.hcandersen.net
 #>
 
-# Get variables from Automation Account
-try {
-    # Get required variables
-    #$clientId = Get-AutomationVariable -Name 'clientId'
-    #$tenantId = Get-AutomationVariable -Name 'tenantId'
-    #$CertificateThumbprint = Get-AutomationVariable -Name 'certificateThumbprint'
-    #$dryrunValue = Get-AutomationVariable -Name 'dryrun'
-$clientId = "71f6c44e-27e3-43ca-b395-630bc43f87ae"
-$tenantId = "2e114308-14ec-4d77-b610-490324fa1844"
-$CertificateThumbprint = "00d0850a07735ea7ce2fd7339213b89e9a0c2757"
-$dryrunValue = $True
-$debugMode = $false # Set to true for detailed debugging output
+# Set up variables - prioritize script parameters over automation variables
 
-    # Handle different types for dryrun value
-    if ($dryrunValue -is [System.Management.Automation.SwitchParameter]) {
-        $DryRun = $dryrunValue.IsPresent
-    } elseif ($dryrunValue -is [bool]) {
-        $DryRun = $dryrunValue
-    } elseif ($dryrunValue -is [string]) {
-        $DryRun = $dryrunValue -eq 'True'
-    } else {
-        Write-Error "dryrun variable must be a boolean or string 'True'/'False'"
-        throw "Invalid dryrun type: $($dryrunValue.GetType().Name)"
+# If running in Azure Automation, get variables from there
+if ($PSPrivateMetadata.JobId) {
+    try {
+        # Get required variables from Automation Account
+        $clientId = Get-AutomationVariable -Name 'clientId'
+        $tenantId = Get-AutomationVariable -Name 'tenantId'
+        $CertificateThumbprint = Get-AutomationVariable -Name 'certificateThumbprint'
+        $dryrunValue = Get-AutomationVariable -Name 'dryrun'
+        
+        # Handle different types for dryrun value from automation
+        if ($dryrunValue -is [System.Management.Automation.SwitchParameter]) {
+            $DryRun = $dryrunValue.IsPresent
+        } elseif ($dryrunValue -is [bool]) {
+            $DryRun = $dryrunValue
+        } elseif ($dryrunValue -is [string]) {
+            $DryRun = $dryrunValue -eq 'True'
+        } else {
+            Write-Error "dryrun variable must be a boolean or string 'True'/'False'"
+            throw "Invalid dryrun type: $($dryrunValue.GetType().Name)"
+        }
+        
+        # Use default notification recipient if not specified in automation variables
+        if (-not $NotificationRecipient) {
+            $NotificationRecipient = "hans.christian.andersen@stark.dk" # Default recipient
+        }
+    } catch {
+        Write-Error "Failed to get required variables from Automation Account: $_"
+        throw "Missing required Automation Account variables. Please ensure clientId, tenantId, and dryrun are set."
     }
+} else {
+    # Running locally - use hardcoded values or script parameters
+    $clientId = "71f6c44e-27e3-43ca-b395-630bc43f87ae"
+    $tenantId = "2e114308-14ec-4d77-b610-490324fa1844"
+    $CertificateThumbprint = "00d0850a07735ea7ce2fd7339213b89e9a0c2757"
+    # DryRun is already set from the parameter
+    
+    # Set debug mode from parameter
+    $debugMode = $DebugMode.IsPresent
+}
 
-    Write-Host "Retrieved automation variables: ClientId and TenantId set" -ForegroundColor Cyan
-    Write-Host "DryRun mode: $(if ($DryRun) { '`$true - No accounts will be deleted' } else { '`$false - Accounts will be deleted' })" -ForegroundColor $(if ($DryRun) { 'Yellow' } else { 'Green' })
-    if ($debugMode) {
-        Write-Host "Debug mode: Enabled - Detailed logging will be shown" -ForegroundColor Cyan
-    }
-} catch {
-    Write-Error "Failed to get required variables from Automation Account: $_"
-    throw "Missing required Automation Account variables. Please ensure clientId, tenantId, and dryrun are set."
+# Display configuration information
+Write-Host "Configuration:" -ForegroundColor Cyan
+Write-Host "  ClientId and TenantId set" -ForegroundColor Cyan
+Write-Host "  DryRun mode: $(if ($DryRun) { '`$true - No accounts will be deleted' } else { '`$false - Accounts will be deleted' })" -ForegroundColor $(if ($DryRun) { 'Yellow' } else { 'Green' })
+Write-Host "  Notification recipient: $NotificationRecipient" -ForegroundColor Cyan
+if ($debugMode) {
+    Write-Host "  Debug mode: Enabled - Detailed logging will be shown" -ForegroundColor Cyan
 }
 
 
-# Extension attribute name for AdminEmployeeId
+# Extension attribute names
 $adminEmployeeIdExtension = "extension_a544ff8b2a174ce0afe606d7cfa8aaa0_AdminEmployeeId"
+$adminManagerMailExtension = "extension_a544ff8b2a174ce0afe606d7cfa8aaa0_AdminManagerMail"
 
 # Function to authenticate user
 function Connect-ToMgGraph {
@@ -117,12 +145,14 @@ function Send-AdminAccountNotification {
     )
     
     # Compose subject and body
-    $subject = "[IAM] Admin Account ${Action}: ${AdminUPN}"
+    $subject = "Action needed - Admin Account will be deleted"
     $bodyContent = "This is an automated notification from the EntraIDAdminAccountDeprovisioning script.<br><br>"
-    $bodyContent += "Admin account: $AdminUPN<br>"
-    $bodyContent += "Action: $Action<br>"
-    $bodyContent += "Reason: $Reason<br><br>"
-    $bodyContent += "This is a test notification. Please review the account as needed."
+    $bodyContent += "Account name: $AdminUPN<br>"
+    $bodyContent += "Please make sure the following:<br>"
+    $bodyContent += "-	Standard account is active<br>"
+    $bodyContent += "-	Unique employee ID is entered in standard account:<br><br>"
+    $bodyContent += "If you are receiving this in error, please reach out to boon.oestergaard@stark.dk:<br><br><br>"
+    $bodyContent += "Reference: EntraIDAdminAccountDeprovisioning script."
 
     # Log the notification to console
     Write-Host "" -ForegroundColor Cyan
@@ -293,6 +323,50 @@ function Get-AdminEmployeeId {
     catch {
         $errorMessage = $_.Exception.Message
         Write-Host "  Error getting AdminEmployeeId for account '$adminUPN': $errorMessage" -ForegroundColor Red
+        return $null
+    }
+}
+
+# Function to get the AdminManagerMail from an admin account
+function Get-AdminManagerMail {
+    param (
+        [Parameter(Mandatory = $true)]
+        [object]$AdminAccount
+    )
+    
+    $adminUPN = $AdminAccount.UserPrincipalName
+    
+    try {
+        if ($debugMode) {
+            Write-Host "  Getting AdminManagerMail for account: $adminUPN"
+        }
+        
+        # Use beta endpoint to get extension attributes
+        $apiUrl = "beta/users/$adminUPN"
+        $userData = Invoke-MgGraphRequest -Method GET -Uri $apiUrl
+        
+        # Check if the extension attribute exists directly
+        if ($userData -and $userData.$adminManagerMailExtension) {
+            return $userData.$adminManagerMailExtension
+        }
+        
+        # If not found directly, check in the extension attributes collection
+        if ($userData.extensions) {
+            foreach ($extension in $userData.extensions) {
+                if ($extension.ContainsKey($adminManagerMailExtension)) {
+                    return $extension.$adminManagerMailExtension
+                }
+            }
+        }
+        
+        if ($debugMode) {
+            Write-Host "  No AdminManagerMail found for account: $adminUPN"
+        }
+        return $null
+    }
+    catch {
+        $errorMessage = $_.Exception.Message
+        Write-Host "  Error getting AdminManagerMail for account '$adminUPN': $errorMessage" -ForegroundColor Red
         return $null
     }
 }
@@ -867,6 +941,15 @@ foreach ($adminAccount in $adminAccounts) {
                     PrimaryAccountUPN = ""
                 }
                 
+                # Get admin manager email from extension attribute
+                $adminManagerMail = Get-AdminManagerMail -AdminAccount $adminAccount
+                
+                # Use admin manager email if available, otherwise use the default notification recipient
+                $emailRecipient = if (-not [string]::IsNullOrWhiteSpace($adminManagerMail)) { $adminManagerMail } else { $NotificationRecipient }
+                
+                # Send notification
+                Send-AdminAccountNotification -Recipient $emailRecipient -AdminUPN $adminUPN -Action "Would be deleted" -Reason "No matching primary account"
+                
                 $results += $result
             } else {
                 # Delete the admin account
@@ -882,6 +965,15 @@ foreach ($adminAccount in $adminAccounts) {
                         HasMatchingPrimaryAccount = "No"
                         PrimaryAccountUPN = ""
                     }
+                    
+                    # Get admin manager email from extension attribute
+                    $adminManagerMail = Get-AdminManagerMail -AdminAccount $adminAccount
+                    
+                    # Use admin manager email if available, otherwise use the default notification recipient
+                    $emailRecipient = if (-not [string]::IsNullOrWhiteSpace($adminManagerMail)) { $adminManagerMail } else { $NotificationRecipient }
+                    
+                    # Send notification
+                    Send-AdminAccountNotification -Recipient $emailRecipient -AdminUPN $adminUPN -Action "Deleted" -Reason "No matching primary account"
                     
                     $results += $result
                 }
@@ -908,8 +1000,14 @@ foreach ($adminAccount in $adminAccounts) {
             Write-Host "  [DRY RUN] Would delete admin account: $adminUPN" -ForegroundColor Yellow
             $successCount++
             
-            # Send notification (test phase)
-            #Send-AdminAccountNotification -Recipient "hans.christian.andersen@stark.dk" -AdminUPN $adminUPN -Action "Would be deleted" -Reason "No matching primary account"
+            # Get admin manager email from extension attribute
+            $adminManagerMail = Get-AdminManagerMail -AdminAccount $adminAccount
+            
+            # Use admin manager email if available, otherwise use the default notification recipient
+            $emailRecipient = if (-not [string]::IsNullOrWhiteSpace($adminManagerMail)) { $adminManagerMail } else { $NotificationRecipient }
+            
+            # Send notification email even in dry run mode
+            Send-AdminAccountNotification -Recipient $emailRecipient -AdminUPN $adminUPN -Action "Would be deleted" -Reason "No matching primary account"
             
             $result = [PSCustomObject]@{
                 AdminUPN = $adminUPN
@@ -926,6 +1024,15 @@ foreach ($adminAccount in $adminAccounts) {
                 Remove-MgUser -UserId $adminAccount.Id
                 Write-Host "  Deleted admin account: $adminUPN" -ForegroundColor Red
                 $successCount++
+                
+                # Get admin manager email from extension attribute
+                $adminManagerMail = Get-AdminManagerMail -AdminAccount $adminAccount
+                
+                # Use admin manager email if available, otherwise use the default notification recipient
+                $emailRecipient = if (-not [string]::IsNullOrWhiteSpace($adminManagerMail)) { $adminManagerMail } else { $NotificationRecipient }
+                
+                # Send notification
+                Send-AdminAccountNotification -Recipient $emailRecipient -AdminUPN $adminUPN -Action "Deleted" -Reason "No matching primary account"
                 
                 $result = [PSCustomObject]@{
                     AdminUPN = $adminUPN
