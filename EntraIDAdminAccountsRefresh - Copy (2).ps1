@@ -63,13 +63,14 @@ function Get-StandardUPN {
         [string]$AdminUPN
     )
 
-    # Internal: Remove 'adm.' prefix
+    # Handle different admin account formats
     if ($AdminUPN -match '^adm\.(.+)@(.+)$') {
+        # Format: adm.username@domain.com
         return "$($Matches[1])@$($Matches[2])"
     }
-    # External: Replace 'ext.adm.' with 'ext.'
     elseif ($AdminUPN -match '^ext\.adm\.(.+)@(.+)$') {
-        return "ext.$($Matches[1])@$($Matches[2])"
+        # Format: ext.adm.username@domain.com
+        return "$($Matches[1])@$($Matches[2])"
     }
     else {
         # Not a recognized admin account format
