@@ -960,7 +960,7 @@ foreach ($adminAccount in $adminAccounts) {
                 
                 
                 # Send notification
-                #Send-AdminAccountNotification -Recipient $emailRecipient -AdminUPN $adminUPN -Action "Would be deleted" -Reason "No matching primary account"
+                Send-AdminAccountNotification -Recipient $emailRecipient -AdminUPN $adminUPN -Action "Would be deleted" -Reason "No matching primary account"
                
                 $results += $result
             } else {
@@ -1019,7 +1019,7 @@ foreach ($adminAccount in $adminAccounts) {
             $emailRecipient = if (-not [string]::IsNullOrWhiteSpace($adminManagerMail)) { $adminManagerMail } else { $NotificationRecipient }
             
             # Send notification email even in dry run mode
-            #Send-AdminAccountNotification -Recipient $emailRecipient -AdminUPN $adminUPN -Action "Would be deleted" -Reason "No matching primary account"
+            Send-AdminAccountNotification -Recipient $emailRecipient -AdminUPN $adminUPN -Action "Would be deleted" -Reason "No matching primary account"
             
             $result = [PSCustomObject]@{
                 AdminUPN = $adminUPN
