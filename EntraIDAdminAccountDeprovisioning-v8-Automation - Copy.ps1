@@ -220,13 +220,13 @@ function Get-AdminAccounts {
         if ($debugMode) {
             Write-Output "Filter: $filter" 
         }
-        
+        #Write-Output "Running Get-AdminAccounts" 
         $allAdminAccounts = Get-MgUser -Filter $filter -Property "UserPrincipalName,DisplayName,Id,OnPremisesSyncEnabled" -All
         
         # Filter out AD synchronized accounts - cloud-only accounts have OnPremisesSyncEnabled as null or false
         $cloudOnlyAdminAccounts = $allAdminAccounts | Where-Object { $_.OnPremisesSyncEnabled -ne $true }
         
-        Write-Output "Found $($cloudOnlyAdminAccounts.Count) cloud-only admin accounts out of $($allAdminAccounts.Count) total admin accounts" 
+        #Write-Output "Found $($cloudOnlyAdminAccounts.Count) cloud-only admin accounts out of $($allAdminAccounts.Count) total admin accounts" 
         return $cloudOnlyAdminAccounts
     }
     catch {
@@ -425,6 +425,7 @@ function Find-MatchingPrimaryAccount {
     $adminUPN = $AdminAccount.UserPrincipalName
     if ($debugMode) {
         Write-Output "Processing admin account: $adminUPN" 
+        Write-Output "Processing admin id account: $AdminAccount.id" 
     }
     
     # Extract the normalized UPN from the admin UPN
@@ -859,6 +860,7 @@ if ($DryRun) {
 
 # Get all admin accounts
 $adminAccounts = Get-AdminAccounts
+Write-Output "Found $($adminAccounts.Count) cloud-only admin accounts" 
 
 if ($adminAccounts.Count -eq 0) {
      Write-Output "No admin accounts found. Exiting script." 

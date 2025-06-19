@@ -5,7 +5,7 @@ param(
     [switch]$DryRun = $false,
     
     [Parameter(Mandatory = $false)]
-    [string]$NotificationRecipient = "hans.christian.andersen@stark.dk",
+    [string]$NotificationRecipient = "",
     
     [Parameter(Mandatory = $false)]
     [switch]$DebugMode = $false
@@ -65,27 +65,13 @@ if ($PSPrivateMetadata.JobId) {
         Write-Error "Failed to get required variables from Automation Account: $_"
         throw "Missing required Automation Account variables. Please ensure clientId, tenantId, and dryrun are set."
     }
-} else {
-    # Running locally - use hardcoded values or script parameters
-    $clientId = "71f6c44e-27e3-43ca-b395-630bc43f87ae"
-    $tenantId = "2e114308-14ec-4d77-b610-490324fa1844"
-    $CertificateThumbprint = "00d0850a07735ea7ce2fd7339213b89e9a0c2757"
-    $NotificationRecipient = "hans.christian.andersen@stark.dk"
-    $responsible = "boon.oestergaard@stark.dk"
-    
-    
-    # Set debug mode from parameter
-    $debugMode = $DebugMode.IsPresent
-}
+} 
 
 # Display configuration information
 Write-Output "Configuration:" 
 Write-Output "  ClientId and TenantId set" 
 Write-Output "  DryRun mode: $(if ($DryRun) { '`$true - No accounts will be deleted' } else { '`$false - Accounts will be deleted' })" 
 Write-Output "  Notification recipient: $NotificationRecipient" 
-if ($debugMode) {
-    Write-Output "  Debug mode: Enabled - Detailed logging will be shown" 
-}
 
 
 # Extension attribute names
@@ -217,16 +203,12 @@ function Get-AdminAccounts {
     try {
         # Get all admin accounts first with a simple filter
         $filter = "startsWith(userPrincipalName, 'adm.') or startsWith(userPrincipalName, 'ext.adm.')"
-        if ($debugMode) {
-            Write-Output "Filter: $filter" 
-        }
-        
+
         $allAdminAccounts = Get-MgUser -Filter $filter -Property "UserPrincipalName,DisplayName,Id,OnPremisesSyncEnabled" -All
         
         # Filter out AD synchronized accounts - cloud-only accounts have OnPremisesSyncEnabled as null or false
         $cloudOnlyAdminAccounts = $allAdminAccounts | Where-Object { $_.OnPremisesSyncEnabled -ne $true }
         
-        Write-Output "Found $($cloudOnlyAdminAccounts.Count) cloud-only admin accounts out of $($allAdminAccounts.Count) total admin accounts" 
         return $cloudOnlyAdminAccounts
     }
     catch {
@@ -241,25 +223,11 @@ function Get-PrimaryAccounts {
     
     # First try using the advanced filter with ConsistencyLevel
     try {
-        if ($debugMode) {
-            Write-Output "Attempting to get primary accounts using advanced filter..." 
-        }
+
         $filter = "not(startsWith(userPrincipalName, 'adm.')) and not(startsWith(userPrincipalName, 'ext.adm.'))"
-        if ($debugMode) {
-            Write-Output "Filter: $filter" 
-        }
        
         $primaryAccounts = Get-MgUser -Filter $filter -Property "UserPrincipalName,DisplayName,EmployeeId,Id" -All -ConsistencyLevel "eventual" -Count userCount -ErrorAction Stop
         
-        # Verify that the accounts have the required properties
-        $sampleAccount = $primaryAccounts | Select-Object -First 1
-        if ($debugMode) {
-            Write-Output "Sample primary account properties:" 
-            Write-Output "  UserPrincipalName: '$($sampleAccount.UserPrincipalName)'" 
-            Write-Output "  EmployeeId: '$($sampleAccount.EmployeeId)'" 
-            Write-Output "  Id: '$($sampleAccount.Id)'" 
-        }
-
         Write-Output "Successfully retrieved $($primaryAccounts.Count) primary accounts using advanced filter" 
         return $primaryAccounts
     }
@@ -304,9 +272,6 @@ function Get-AdminEmployeeId {
     $adminUPN = $AdminAccount.UserPrincipalName
     
     try {
-        if ($debugMode) {
-            Write-Output "  Getting AdminEmployeeId for account: $adminUPN"
-        }
         
         # Use beta endpoint to get extension attributes
         $apiUrl = "beta/users/$adminUPN"
@@ -326,9 +291,6 @@ function Get-AdminEmployeeId {
             }
         }
         
-        if ($debugMode) {
-            Write-Output "  No AdminEmployeeId found for account: $adminUPN"
-        }
         return $null
     }
     catch {
@@ -348,9 +310,6 @@ function Get-AdminManagerMail {
     $adminUPN = $AdminAccount.UserPrincipalName
     
     try {
-        if ($debugMode) {
-            Write-Output "  Getting AdminManagerMail for account: $adminUPN"
-        }
         
         # Use beta endpoint to get extension attributes
         $apiUrl = "beta/users/$adminUPN"
@@ -370,9 +329,6 @@ function Get-AdminManagerMail {
             }
         }
         
-        if ($debugMode) {
-            Write-Output "  No AdminManagerMail found for account: $adminUPN"
-        }
         return $null
     }
     catch {
@@ -396,11 +352,8 @@ function Get-AllUsersCache {
     Write-Output "Retrieving and caching all users from Microsoft Graph..." 
     try {
         $Global:AllUsersCache = Get-MgUser -All -Property "UserPrincipalName,DisplayName,EmployeeId,Id" -ErrorAction Stop
-        if ($debugMode) {
-            Write-Output "Successfully cached $($Global:AllUsersCache.Count) users" 
-        } else {
-            Write-Output "Users cached successfully" 
-        }
+
+        Write-Output "Users cached successfully" 
     } catch {
         Write-Output "Error retrieving all users: $_"
         $Global:AllUsersCache = @()
@@ -423,9 +376,6 @@ function Find-MatchingPrimaryAccount {
     }
     
     $adminUPN = $AdminAccount.UserPrincipalName
-    if ($debugMode) {
-        Write-Output "Processing admin account: $adminUPN" 
-    }
     
     # Extract the normalized UPN from the admin UPN
     $normalizedUPN = $null
@@ -436,9 +386,7 @@ function Find-MatchingPrimaryAccount {
         $username = $matches[1]
         $domain = $matches[2]
         $normalizedUPN = "$username@$domain"
-        if ($debugMode) {
-            Write-Output "  Extracted normalized UPN: $normalizedUPN" 
-        }
+
     }
     # For pattern like ext.adm.username@domain.com
     elseif ($adminUPN -match '^ext\.adm\.(.*?)@(.*)$') {
@@ -446,9 +394,7 @@ function Find-MatchingPrimaryAccount {
         $username = $matches[1]
         $domain = $matches[2]
         $normalizedUPN = "$username@$domain"
-        if ($debugMode) {
-            Write-Output "  Extracted normalized UPN: $normalizedUPN" 
-        }
+
     }
     # For pattern like adm.username@domain.com
     elseif ($adminUPN -match '^adm\.(.*?)@(.*)$') {
@@ -456,9 +402,7 @@ function Find-MatchingPrimaryAccount {
         $username = $matches[1]
         $domain = $matches[2]
         $normalizedUPN = "$username@$domain"
-        if ($debugMode) {
-            Write-Output "  Extracted normalized UPN: $normalizedUPN" 
-        }
+
     }
     
     # Get the AdminEmployeeId from the admin account
@@ -466,15 +410,10 @@ function Find-MatchingPrimaryAccount {
     
     # First try to match by employeeId using the alternative approach (client-side filtering)
     if ($adminEmployeeId) {
-        if ($debugMode) {
-            Write-Output "  Admin account employeeId: $adminEmployeeId" 
-        }
+
         
         # Use the alternative approach with client-side filtering as the primary method
         try {
-            if ($debugMode) {
-                Write-Output "  Using client-side filtering to find primary account..." 
-            }
             
             # Get all users from cache
             $allUsers = Get-AllUsersCache
@@ -491,33 +430,16 @@ function Find-MatchingPrimaryAccount {
                     }
                 }
                 
-                if ($debugMode) {
-                    Write-Output "  DEBUG: Found $($usersWithEmployeeId.Count) users with employeeId '$normalizedAdminEmployeeId'" 
-                } else {
-                    # Minimal output for production use
+                # Minimal output for production use
                     if ($usersWithEmployeeId.Count -gt 0) {
                         Write-Output "  Found $($usersWithEmployeeId.Count) users with matching employeeId" 
                     }
-                }
                 
                 if ($usersWithEmployeeId.Count -gt 0) {
                     # Get the first matching user
                     $firstMatch = $usersWithEmployeeId[0]
-                    
-                    # Log basic info about the match only in debug mode
-                    if ($debugMode) {
-                        Write-Output "  DEBUG: First matching user by employeeId:" 
-                        
-                        # Only try to access properties if the object is not null
-                        if ($null -ne $firstMatch) {
-                            Write-Output "    UserPrincipalName: '$($firstMatch.UserPrincipalName)'" 
-                            Write-Output "    DisplayName: '$($firstMatch.DisplayName)'" 
-                            Write-Output "    EmployeeId: '$($firstMatch.EmployeeId)'" 
-                        } else {
-                            Write-Output "    Object is null" 
-                        }
-                    }
-                    
+                                      
+                    Write-Output "    Object is null"
                     # Find primary accounts (non-admin) among the matching users
                     $primaryMatches = @()
                     foreach ($user in $usersWithEmployeeId) {
@@ -536,20 +458,7 @@ function Find-MatchingPrimaryAccount {
                         $upn = $primaryAccount.UserPrincipalName.ToString()
                         
                         Write-Output "  Found primary account match by employeeId: $upn, $($primaryAccount.EmployeeId)" 
-                        
-                        if ($debugMode) {
-                            Write-Output "  DEBUG: Primary account details:" 
-                            Write-Output "    UserPrincipalName: '$upn'"
-                            
-                            if ($null -ne $primaryAccount.DisplayName) {
-                                Write-Output "    DisplayName: '$($primaryAccount.DisplayName)'"
-                            }
-                            
-                            if ($null -ne $primaryAccount.EmployeeId) {
-                                Write-Output "    EmployeeId: '$($primaryAccount.EmployeeId)'"
-                            }
-                        }
-                        
+                                               
                         return $primaryAccount
                     }
                 }
@@ -568,9 +477,6 @@ function Find-MatchingPrimaryAccount {
                 
                 # If no matches found, try a more flexible approach with the normalized UPN
                 if (-not $matchingUsers -or $matchingUsers.Count -eq 0) {
-                    if ($debugMode) {
-                        Write-Output "  No exact employeeId matches found, trying flexible matching..." 
-                    }
                     
                     if ($normalizedUPN) {
                         # Extract username part for more flexible matching
@@ -586,11 +492,7 @@ function Find-MatchingPrimaryAccount {
                                 -not ($_.UserPrincipalName -like 'ext.adm.*')
                             }
                             
-                            if ($matchingUsers -and $matchingUsers.Count -gt 0) {
-                                if ($debugMode) {
-                                    Write-Output "  Found $($matchingUsers.Count) potential matches using flexible username matching" 
-                                }
-                            }
+
                         }
                     }
                 }
@@ -611,31 +513,20 @@ function Find-MatchingPrimaryAccount {
                         
                         return $matchedUser
                     }
-                } else {
-                    if ($debugMode) {
-                        Write-Output "  No primary account found using client-side filtering" 
-                    }
-                }
+                } 
             } else {
                 Write-Output "  Failed to get cached users list" 
             }
         } catch {
-            if ($debugMode) {
+
                 Write-Output "  Error in client-side filtering approach: $($_.Exception.Message)" 
-            }
+
         }
-    } else {
-        if ($debugMode) {
-            Write-Output "  No AdminEmployeeId found for admin account: $adminUPN" 
-        }
-    }
+    } 
     
     # Fallback to UPN matching if no match by employeeId
     if ($normalizedUPN) {
         try {
-            if ($debugMode) {
-                Write-Output "  Looking for primary account with UPN: $normalizedUPN" 
-            }
             
             # Get all users from cache
             $allUsers = Get-AllUsersCache
@@ -674,18 +565,8 @@ function Find-MatchingPrimaryAccount {
                         }
                     }
                 }
-                if ($debugMode) {
-                    Write-Output "  DEBUG: Found $($similarUpnUsers.Count) users with similar UPN to '$normalizedUPN'" 
-                }
                 
                 if ($similarUpnUsers.Count -gt 0) {
-                    if ($debugMode) {
-                        Write-Output "  DEBUG: Top 3 similar UPN matches:"
-                        $topMatches = $similarUpnUsers | Select-Object -First 3
-                        foreach ($match in $topMatches) {
-                            Write-Output "    UPN: '$($match.UserPrincipalName)', EmployeeId: '$($match.EmployeeId)'"
-                        }
-                    }
                     
                     # Find primary accounts (non-admin) among the matching users
                     $primaryMatches = @()
@@ -705,19 +586,6 @@ function Find-MatchingPrimaryAccount {
                         $upn = $primaryAccount.UserPrincipalName.ToString()
                         
                         Write-Output "  Found primary account match by UPN: $upn" 
-                        
-                        if ($debugMode) {
-                            Write-Output "  DEBUG: Primary account details:" 
-                            Write-Output "    UserPrincipalName: '$upn'"
-                            
-                            if ($null -ne $primaryAccount.DisplayName) {
-                                Write-Output "    DisplayName: '$($primaryAccount.DisplayName)'" 
-                            }
-                            
-                            if ($null -ne $primaryAccount.EmployeeId) {
-                                Write-Output "    EmployeeId: '$($primaryAccount.EmployeeId)'" 
-                            }
-                        }
                         
                         return $primaryAccount
                     }
@@ -751,9 +619,6 @@ function Find-MatchingPrimaryAccount {
                 
                 # If no exact matches found, try a more flexible approach
                 if (-not $upnMatches -or $upnMatches.Count -eq 0) {
-                    if ($debugMode) {
-                        Write-Output "  No exact UPN matches found, trying flexible matching..." 
-                    }
                     
                     # Extract username part for more flexible matching
                     $upnParts = $normalizedUPN -split '@'
@@ -768,11 +633,6 @@ function Find-MatchingPrimaryAccount {
                             -not ($_.UserPrincipalName -like 'ext.adm.*')
                         }
                         
-                        if ($upnMatches -and $upnMatches.Count -gt 0) {
-                            if ($debugMode) {
-                                Write-Output "  Found $($upnMatches.Count) potential matches using flexible username matching" 
-                            }
-                        }
                     }
                 }
                 
@@ -792,17 +652,10 @@ function Find-MatchingPrimaryAccount {
                         
                         return $matchedUser
                     }
-                } else {
-                    if ($debugMode) {
-                        Write-Output "  No primary account found with UPN: $normalizedUPN" 
-                    }
-                }
+                } 
             } else {
                 # Fallback to direct API call if cache failed
                 $filter = "userPrincipalName eq '$normalizedUPN'"
-                if ($debugMode) {
-                    Write-Output "  Cache failed, using direct API call with filter: $filter" 
-                }
                 
                 $upnMatches = Get-MgUser -Filter $filter -Property "UserPrincipalName,DisplayName,EmployeeId,Id" -ErrorAction Stop
                 
@@ -817,23 +670,13 @@ function Find-MatchingPrimaryAccount {
                     Write-Output "    EmployeeId: '$($upnMatches.EmployeeId)'"
                     
                     return $upnMatches
-                } else {
-                    if ($debugMode) {
-                        Write-Output "  No primary account found with UPN: $normalizedUPN" 
-                    }
-                }
+                } 
             }
         } catch {
-            if ($debugMode) {
                 Write-Output "  Error searching for primary account by UPN: $($_.Exception.Message)" 
-            }
         }
     }
     
-    # If we get here, no matching primary account was found
-    if ($debugMode) {
-        Write-Output "  No matching primary account found using any method" 
-    }
     Write-Output "  Admin account doesn't have a matching primary account" 
     return $null   
 }
@@ -859,6 +702,7 @@ if ($DryRun) {
 
 # Get all admin accounts
 $adminAccounts = Get-AdminAccounts
+Write-Output "Found $($adminAccounts.Count) cloud-only admin accounts" 
 
 if ($adminAccounts.Count -eq 0) {
      Write-Output "No admin accounts found. Exiting script." 
@@ -869,15 +713,6 @@ if ($adminAccounts.Count -eq 0) {
 # Initialize the user cache before processing admin accounts
  Write-Output "Initializing user cache..." 
 $allUsersCache = Get-AllUsersCache
-
-# Debug: Show some sample users from the cache to verify data
-if ($debugMode) {
-     Write-Output "Sample users from cache:" 
-    $sampleUsers = $Global:AllUsersCache | Select-Object -First 5
-    foreach ($user in $sampleUsers) {
-         Write-Output "  UserPrincipalName: '$($user.UserPrincipalName)', EmployeeId: '$($user.EmployeeId)'" 
-    }
-}
 
 # Get all primary accounts for bulk processing (this will be used as a fallback)
 $primaryAccounts = Get-PrimaryAccounts
@@ -915,13 +750,6 @@ foreach ($adminAccount in $adminAccounts) {
     
     # Debug the returned primary account
     if ($primaryAccount) {
-        if ($debugMode) {
-             Write-Output "  DEBUG: Returned primary account:" 
-            Write-Output "    Type: $($primaryAccount.GetType().FullName)" 
-            Write-Output "    UserPrincipalName: '$($primaryAccount.UserPrincipalName)'" 
-            Write-Output "    DisplayName: '$($primaryAccount.DisplayName)'" 
-            Write-Output "    EmployeeId: '$($primaryAccount.EmployeeId)'" 
-        }
         
         # Check if the primary account has a valid UserPrincipalName
         if (-not [string]::IsNullOrEmpty($primaryAccount.UserPrincipalName)) {
@@ -1092,26 +920,6 @@ else {
 Write-Output "Skipped: $skippedCount admin accounts" 
 Write-Output "Failed: $failureCount admin accounts" 
 Write-Output "----------------------------------------"
-<#
-# Export results to CSV and output them
-$timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$csvPath = "./EntraIDAdminAccountDeprovisioning-$timestamp.csv"
-$results | Export-Csv -Path $csvPath -NoTypeInformation
-Write-Output "`nResults exported to: $csvPath" -ForegroundColor Green
-
-Write-Output "`nDetailed Results:"
-$results | ForEach-Object {
-    Write-Output "----------------------------------------"
-    Write-Output "Admin Account: $($_.AdminUPN)"
-    Write-Output "Action: $($_.Action)"
-    Write-Output "Reason: $($_.Reason)"
-    Write-Output "Has Matching Normal Account: $($_.HasMatchingNormalAccount)"
-    if ($_.NormalAccountUPN) {
-        Write-Output "Normal Account: $($_.NormalAccountUPN)"
-    }
-}
-Write-Output "----------------------------------------"
-#>
 
 # Disconnect from Microsoft Graph
 Disconnect-FromMgGraph
