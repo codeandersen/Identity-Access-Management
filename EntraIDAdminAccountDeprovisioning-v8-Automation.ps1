@@ -26,14 +26,9 @@ param(
 .EXAMPLE
     This script is intended to be run in Azure Automation.
     Configure the required automation variables before running:
-    - dryrun = True (to simulate deletions)
-    - dryrun = False (to perform actual deletions)
+    - dryrun = True (to simulate deletions).
+    - dryrun = False (to perform actual deletions).
 .NOTES
-    Author Links:
-    - LinkedIn: https://www.linkedin.com/in/hanschrandersen/
-    - GitHub: https://github.com/codeandersen
-    - Twitter: https://x.com/dk_hcandersen
-    - Homepage: https://www.hcandersen.net
 #>
 
 # Set up variables - prioritize script parameters over automation variables
@@ -91,15 +86,8 @@ function Connect-ToMgGraph {
             }
             catch {
                 Write-Output "Certificate authentication failed: $($_.Exception.Message)" 
-                Write-Output "Falling back to interactive authentication..." 
-                # Fall through to interactive auth
             }
         }
-        
-        # Interactive fallback (delegated, requires -Scopes)
-        Connect-MgGraph -Scopes "User.ReadWrite.All", "Directory.ReadWrite.All" -NoWelcome
-        Write-Output "Connected to Microsoft Graph using interactive authentication" 
-        return $true
     }
     catch {
         Write-Output "Failed to connect to Microsoft Graph: $_"
@@ -142,9 +130,10 @@ function Send-AdminAccountNotification {
         $bodyContent += "If you are receiving this in error, please reach out to $responsible <br><br>"
         $bodyContent += "Reference: EntraIDAdminAccountDeprovisioning script"
     } else {
-        $subject = "Admin Account deleted"
-        $bodyContent = "This is an automated notification from the EntraIDAdminAccountDeprovisioning script.<br><br>"
-        $bodyContent += "The following cloud admin account have been deleted.<br><br>"
+        $subject = "Entra ID Privileged Account deleted"
+        $bodyContent = "This is an automated notification.<br><br>"
+        $bodyContent += "The following Entra ID Privileged account has been deleted because there is no active standard account with unique employee ID. All other privileged accounts are untouched.<br><br>"
+        $bodyContent += "Reach out to IAM team if you are receiving this in error.<br><br>"
         $bodyContent += "Account name: $AdminUPN<br>"
         $bodyContent += "Reference: EntraIDAdminAccountDeprovisioning script"
     }
@@ -159,7 +148,7 @@ function Send-AdminAccountNotification {
     Write-Output "" 
     
     #While testing
-    $Recipient = $NotificationRecipient
+    #$Recipient = $NotificationRecipient
     # Send the actual email using Microsoft Graph API
     try {
         # Configure mail settings - using delegated permissions to send mail as the user
@@ -754,7 +743,7 @@ foreach ($adminAccount in $adminAccounts) {
         # Check if the primary account has a valid UserPrincipalName
         if (-not [string]::IsNullOrEmpty($primaryAccount.UserPrincipalName)) {
             # Admin account has a matching primary account, don't delete
-             Write-Output "  Admin account has a matching primary account: $($primaryAccount.UserPrincipalName)" 
+             Write-Output "  Admin account has a matching primary account: $($primaryAccount.UserPrincipalName), $($primaryAccount.EmployeeId)" 
             $skippedCount++
             
             $result = [PSCustomObject]@{
@@ -797,6 +786,12 @@ foreach ($adminAccount in $adminAccounts) {
             } else {
                 # Delete the admin account
                 try {
+                    
+                    # Get admin manager email from extension attribute
+                    $adminManagerMail = Get-AdminManagerMail -AdminAccount $adminAccount
+                    Write-Output "Admin manager mail: $adminManagerMail"
+
+                    # Remove admin account
                     Remove-MgUser -UserId $adminAccount.Id
                     Write-Output "  Deleted admin account: $adminUPN" 
                     $successCount++
@@ -809,14 +804,12 @@ foreach ($adminAccount in $adminAccounts) {
                         PrimaryAccountUPN = ""
                     }
                     
-                    # Get admin manager email from extension attribute
-                    $adminManagerMail = Get-AdminManagerMail -AdminAccount $adminAccount
                     
                     # Use admin manager email if available, otherwise use the default notification recipient
                     $emailRecipient = if (-not [string]::IsNullOrWhiteSpace($adminManagerMail)) { $adminManagerMail } else { $NotificationRecipient }
                     
                     # Send notification
-                    #Send-AdminAccountNotification -Recipient $emailRecipient -AdminUPN $adminUPN -Action "Deleted" -Reason "No matching primary account"
+                    Send-AdminAccountNotification -Recipient $emailRecipient -AdminUPN $adminUPN -Action "Deleted" -Reason "No matching primary account"
                     
                     $results += $result
                 }
@@ -850,7 +843,7 @@ foreach ($adminAccount in $adminAccounts) {
             $emailRecipient = if (-not [string]::IsNullOrWhiteSpace($adminManagerMail)) { $adminManagerMail } else { $NotificationRecipient }
             
             # Send notification email even in dry run mode
-            #Send-AdminAccountNotification -Recipient $emailRecipient -AdminUPN $adminUPN -Action "Would be deleted" -Reason "No matching primary account"
+            Send-AdminAccountNotification -Recipient $emailRecipient -AdminUPN $adminUPN -Action "Would be deleted" -Reason "No matching primary account"
             
             $result = [PSCustomObject]@{
                 AdminUPN = $adminUPN
@@ -864,19 +857,25 @@ foreach ($adminAccount in $adminAccounts) {
         }
         else {
             try {
-                Remove-MgUser -UserId $adminAccount.Id
-                Write-Output "  Deleted admin account: $adminUPN" 
-                $successCount++
+               
                 
                 # Get admin manager email from extension attribute
                 $adminManagerMail = Get-AdminManagerMail -AdminAccount $adminAccount
+                Write-Output " Admin manager mail: $adminManagerMail" 
                 
+                #Remove admin account
+                Remove-MgUser -UserId $adminAccount.Id
+                Write-Output "  Deleted admin account: $adminUPN" 
+                $successCount++
+
                 # Use admin manager email if available, otherwise use the default notification recipient
                 $emailRecipient = if (-not [string]::IsNullOrWhiteSpace($adminManagerMail)) { $adminManagerMail } else { $NotificationRecipient }
                 
                 # Send notification
-                #Send-AdminAccountNotification -Recipient $emailRecipient -AdminUPN $adminUPN -Action "Deleted" -Reason "No matching primary account"
+                Send-AdminAccountNotification -Recipient $emailRecipient -AdminUPN $adminUPN -Action "Deleted" -Reason "No matching primary account"
                 
+
+
                 $result = [PSCustomObject]@{
                     AdminUPN = $adminUPN
                     Action = "Deleted"
