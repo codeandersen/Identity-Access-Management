@@ -28,15 +28,10 @@
 # Get variables from Automation Account
 try {
     # Get required variables
-    #$clientId = Get-AutomationVariable -Name 'clientId'
-    #$tenantId = Get-AutomationVariable -Name 'tenantId'
-    #$CertificateThumbprint = Get-AutomationVariable -Name 'certificateThumbprint'
-    #$dryrunValue = Get-AutomationVariable -Name 'dryrun'
-$clientId = "71f6c44e-27e3-43ca-b395-630bc43f87ae"
-$tenantId = "2e114308-14ec-4d77-b610-490324fa1844"
-$CertificateThumbprint = "00d0850a07735ea7ce2fd7339213b89e9a0c2757"
-$dryrunValue = $True
-$debugMode = $false # Set to true for detailed debugging output
+    $clientId = Get-AutomationVariable -Name 'clientId'
+    $tenantId = Get-AutomationVariable -Name 'tenantId'
+    $CertificateThumbprint = Get-AutomationVariable -Name 'certificateThumbprint'
+    $dryrunValue = Get-AutomationVariable -Name 'dryrun'
 
     # Handle different types for dryrun value
     if ($dryrunValue -is [System.Management.Automation.SwitchParameter]) {
@@ -909,7 +904,7 @@ foreach ($adminAccount in $adminAccounts) {
             $successCount++
             
             # Send notification (test phase)
-            #Send-AdminAccountNotification -Recipient "hans.christian.andersen@stark.dk" -AdminUPN $adminUPN -Action "Would be deleted" -Reason "No matching primary account"
+            Send-AdminAccountNotification -Recipient "hans.christian.andersen@stark.dk" -AdminUPN $adminUPN -Action "Would be deleted" -Reason "No matching primary account"
             
             $result = [PSCustomObject]@{
                 AdminUPN = $adminUPN
